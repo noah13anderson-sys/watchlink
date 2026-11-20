@@ -51,10 +51,14 @@ DA AD DA AD | 01 | u16 len (= payload + 11) | u16 cmd | u16 seq | payload | u16 
 | cmd | Meaning |
 |---|---|
 | `0x04` | health sync, see below |
+| `0x06` | watch face list (no payload). Reply: short header, then entries `01, u32 len, name` (e.g. `w324.iwf`) |
+| `0x07` | screen info (no payload). Reply includes `u16 width, u16 height` = 240 × 240 on the SW2S |
+| `0x08` | set current face: name zero-padded to 31 bytes. Reply `00` + name = ok |
 | `0x0A` | music info: `u8 status, u16 position s, u16 length s, u16 name len, name[64]` (the SW2S doesn't reply) |
 | `0x0B` | **message notification**: `ver=1, flags=0, has_contact, has_phone, has_msg, u16 (app type | 0x3000), u32 id, u32 0, u16 0`, then for each present string `01, u32 len, bytes` (contact, phone, message). Reply `01`. |
 | `0x0E` | set alarms, see below |
 | `0x0F` | get alarms (payload `00`) |
+| `0x35` | main UI sort / `0x78` menu list: no reply on the SW2S (firmware 1.01) |
 | `0x3A` | weather, see below. Reply `03 00` = {version 3, error 0} |
 
 ### Alarms (`0x0E`)

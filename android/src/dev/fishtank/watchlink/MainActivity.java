@@ -129,6 +129,9 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Updating weather on the watch…", Toast.LENGTH_SHORT).show();
         });
         Ui.divider(this, watchCard);
+        Ui.row(this, watchCard, "Watch faces", "Change the clock face on the watch", v ->
+                startActivity(new Intent(this, FacesActivity.class)));
+        Ui.divider(this, watchCard);
         Ui.row(this, watchCard, "Alarms", "Set wake-up alarms on the watch", v ->
                 startActivity(new Intent(this, AlarmsActivity.class)));
 

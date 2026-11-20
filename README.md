@@ -23,6 +23,7 @@ plus PC tools and notes on the watch's Bluetooth protocol.
 | Sleep (total) | ⏳ needs a night of data to confirm the format |
 | Weather (current, 48 h, 7 days, city) from Open-Meteo, MET Norway as fallback | ✅ |
 | Find my phone (full volume, Stop button) | ✅ |
+| Watch faces: list the faces installed on the watch and switch between them | ✅ |
 | Find my watch | ⏳ vibration command added, needs testing |
 | Music: watch play/pause/next/prev control the phone's player | ✅ play/pause; pair "Calls & music" for full AVRCP control |
 | Battery & firmware | ✅ |

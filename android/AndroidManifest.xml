@@ -31,6 +31,7 @@
 
         <activity android:name=".AlarmsActivity" android:exported="false" />
         <activity android:name=".AppsActivity" android:exported="false" />
+        <activity android:name=".FacesActivity" android:exported="false" />
 
         <service android:name=".WatchService"
             android:exported="false"

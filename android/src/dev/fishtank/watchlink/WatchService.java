@@ -299,8 +299,15 @@ public class WatchService extends Service {
             Log.i(TAG, "v3 frame cmd=0x" + Integer.toHexString(cmd) + " crc=" + (crcOk ? "ok" : "BAD")
                     + " payload=" + IdoProtocol.hex(payload));
             if (cmd == IdoProtocol.V3_HEALTH) onHeartPage(payload);
+            else if (cmd == IdoProtocol.V3_FACE_LIST) {
+                faces = IdoProtocol.parseFaceList(payload);
+                FacesActivity.refresh();
+            } else if (cmd == IdoProtocol.V3_FACE_SET) FacesActivity.onSetResult(payload.length > 0 && payload[0] == 0);
         }
     }
+
+    /** Faces installed on the watch (null until the watch has answered). */
+    static volatile List<String> faces;
 
     // ---- Health sync: heart rate, stress, SpO2, sleep (one type at a time) ----
     /** Latest value, its time (seconds after midnight, -1 = none), and today's min/max. */

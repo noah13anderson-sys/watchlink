@@ -370,4 +370,30 @@ public final class IdoProtocol {
         for (byte x : d) sb.append(String.format("%02x ", x));
         return sb.toString().trim();
     }
+
+    // ---- Watch faces (v3) ----
+    public static final int V3_FACE_LIST = 0x06, V3_FACE_SET = 0x08;
+
+    /** Make an installed face current: name (e.g. "w331.iwf") zero-padded to 31 bytes. Reply 00 = ok. */
+    public static byte[] faceSet(String name) {
+        byte[] out = new byte[31];
+        byte[] n = name.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(n, 0, out, 0, Math.min(n.length, 30));
+        return out;
+    }
+
+    /** Face list reply: a short header, then entries of 01, u32 length, ASCII name. */
+    public static java.util.List<String> parseFaceList(byte[] p) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (int i = 0; i + 5 < p.length; i++) {
+            if (p[i] != 1 || p[i + 2] != 0 || p[i + 3] != 0 || p[i + 4] != 0) continue;
+            int n = p[i + 1] & 0xff;
+            if (n < 3 || n > 30 || i + 5 + n > p.length) continue;
+            String s = new String(p, i + 5, n, java.nio.charset.StandardCharsets.US_ASCII);
+            if (!s.matches("[\\w.-]+")) continue;
+            out.add(s);
+            i += 4 + n;
+        }
+        return out;
+    }
 }
