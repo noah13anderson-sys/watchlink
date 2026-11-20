@@ -85,7 +85,7 @@ echo(5), u16 items remaining, u16 head length, u16 data length, …, head, data
 * `head` starts with `u16 year, month, day, u32 start time`.
 * `data` items are `(u8 delta, u8 value)`. A value of 0 is filler (e.g. `ff 00` = 255-unit gap).
 * Heart rate: start time and deltas are in **seconds** after midnight.
-* Stress and SpO2: start time and deltas are in **minutes** (SpO2 *unverified*).
+* Stress and SpO2: start time and deltas are in **minutes**.
 * Sleep: 40-byte head with `u16 total minutes` at head+6 and the stage count at head+22. Items are `(stage, minutes)`; stage codes are *unverified*.
 * `offset` skips that many items. Past the end, the watch starts over from 0.
 

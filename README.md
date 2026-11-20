@@ -19,7 +19,7 @@ plus PC tools and notes on the watch's Bluetooth protocol.
 | Steps, calories, distance (live) | ✅ |
 | Heart rate (latest, time, today's range) from the watch's health sync | ✅ |
 | Stress | ✅ |
-| Blood oxygen (turns on all-day SpO2 so readings are saved) | ✅ readings appear once the watch measures |
+| Blood oxygen (turns on all-day SpO2 so the watch saves readings) | ✅ |
 | Sleep (total) | ⏳ needs a night of data to confirm the format |
 | Weather (current, 48 h, 7 days, city) from Open-Meteo, MET Norway as fallback | ✅ |
 | Find my phone (full volume, Stop button) | ✅ |
