@@ -1,0 +1,14 @@
+# Whitelist: only our own source and docs are published.
+# Momax/IDO binaries, decompiled code, phone logs and bug reports must never be committed.
+*
+!.gitignore
+!README.md
+!PROTOCOL.md
+!sw2s.py
+!ido_dbus.py
+!android/
+android/*
+!android/AndroidManifest.xml
+!android/build.sh
+!android/src/
+!android/src/**
