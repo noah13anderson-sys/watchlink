@@ -347,6 +347,21 @@ public class WatchService extends Service {
         h.postDelayed(() -> { if (healthRun == run && healthIdx == idx) { healthIdx++; startHealthType(); } }, 8000);
     }
 
+    private String lastRaw = "";
+
+    /** Keep a copy of new, non-empty health replies (Android/data/dev.fishtank.watchlink/files/health-raw.txt)
+     *  so formats such as sleep stages can be decoded later. */
+    private void saveRaw(String what, byte[] payload) {
+        boolean empty = true;
+        for (int i = 5; i < payload.length; i++) if (payload[i] != 0 && i != 7) { empty = false; break; }
+        String hex = IdoProtocol.hex(payload);
+        if (empty || hex.equals(lastRaw)) return;
+        lastRaw = hex;
+        try (java.io.FileWriter w = new java.io.FileWriter(new java.io.File(getExternalFilesDir(null), "health-raw.txt"), true)) {
+            w.write(new java.util.Date() + " " + what + " " + hex + "\n");
+        } catch (Exception e) { Log.w(TAG, "saveRaw", e); }
+    }
+
     private void onHeartPage(byte[] payload) {
         if (healthIdx < 0 || payload.length < 5) return;
         int type = HEALTH_TYPES[healthIdx];
@@ -355,6 +370,7 @@ public class WatchService extends Service {
         if (echoedOffset != healthOffset) return;      // stale/duplicate reply
 
         if (type == IdoProtocol.HEALTH_TYPE_SLEEP) {
+            saveRaw("sleep", payload);
             sleepMins = IdoProtocol.parseSleepTotal(payload);
             Log.i(TAG, "sleep " + sleepMins + " min");
             healthIdx++; startHealthType();
