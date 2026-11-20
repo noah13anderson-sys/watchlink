@@ -55,6 +55,7 @@ public class FacesActivity extends Activity {
         sv.setBackgroundColor(Ui.bg(this));
         sv.addView(root);
         setContentView(sv);
+        getWindow().setNavigationBarColor(Ui.bg(this));
     }
 
     @Override protected void onResume() {

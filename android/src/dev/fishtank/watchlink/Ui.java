@@ -16,17 +16,39 @@ import android.widget.TextView;
 final class Ui {
     private Ui() {}
 
-    static boolean dark(Context c) {
-        return (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
-                == Configuration.UI_MODE_NIGHT_YES;
+    /** WatchLink always uses the dark Sweet-Mars palette (matches the KDE desktop theme). */
+    static boolean dark(Context c) { return true; }
+
+    // Sweet-Mars (KDE) colours
+    static int bg(Context c)      { return 0xFF181B28; }   // Window background 24,27,40
+    static int card(Context c)    { return 0xFF1E2233; }   // Button/View alternate 30,34,51
+    static int text(Context c)    { return 0xFFD3DAE3; }   // Foreground 211,218,227
+    static int subtext(Context c) { return 0xFF8A909E; }   // a little brighter than KDE's inactive grey, for contrast
+    static final int ACCENT = 0xFF00D3B8;                   // teal 0,211,184
+    static final int ON_ACCENT = 0xFF161925;                // dark text on teal buttons
+    static final int GOOD = 0xFF71F79F, WARN = 0xFFFF6A00, BAD = 0xFFED254E;
+
+    /** Colour an activity's window and system bars, and give check boxes the accent colour. */
+    static void style(android.app.Activity a, View root) {
+        a.getWindow().setStatusBarColor(bg(a));
+        a.getWindow().setNavigationBarColor(bg(a));
+        if (a.getActionBar() != null) a.getActionBar().hide();
+        tint(root);
     }
 
-    static int bg(Context c)      { return dark(c) ? 0xFF121417 : 0xFFF3F4F7; }
-    static int card(Context c)    { return dark(c) ? 0xFF1E2126 : 0xFFFFFFFF; }
-    static int text(Context c)    { return dark(c) ? 0xFFECEDEF : 0xFF16181C; }
-    static int subtext(Context c) { return dark(c) ? 0xFF9AA0A8 : 0xFF6B7078; }
-    static final int ACCENT = 0xFF2E7D6B;   // teal-green
-    static final int GOOD = 0xFF2EA043, WARN = 0xFFD29922, BAD = 0xFFCF4B3E;
+    private static void tint(View v) {
+        if (v instanceof android.widget.CompoundButton) {
+            ((android.widget.CompoundButton) v).setButtonTintList(ColorStateList.valueOf(ACCENT));
+            ((TextView) v).setTextColor(0xFFD3DAE3);
+        } else if (v instanceof android.widget.Button) {
+            ((TextView) v).setTextColor(ON_ACCENT);
+            v.setBackground(rounded(ACCENT, v.getResources().getDisplayMetrics().density * 12));
+        } else if (v instanceof TextView) ((TextView) v).setTextColor(0xFFD3DAE3);
+        if (v instanceof android.view.ViewGroup) {
+            android.view.ViewGroup g = (android.view.ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) tint(g.getChildAt(i));
+        }
+    }
 
     static int dp(Context c, float v) { return Math.round(v * c.getResources().getDisplayMetrics().density); }
 
@@ -85,7 +107,7 @@ final class Ui {
         }
         int p = dp(c, 12);
         t.setPadding(dp(c, 4), p, dp(c, 4), p);
-        t.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22888888), null, rounded(Color.WHITE, dp(c, 12))));
+        t.setBackground(new RippleDrawable(ColorStateList.valueOf(0x3300D3B8), null, rounded(Color.WHITE, dp(c, 12))));
         t.setOnClickListener(cl);
         card.addView(t, new LinearLayout.LayoutParams(-1, -2));
         return t;
@@ -101,7 +123,7 @@ final class Ui {
 
     /** Prominent filled button. */
     static TextView primary(Context c, LinearLayout parent, String s, View.OnClickListener cl) {
-        TextView b = label(c, s, 16, true, Color.WHITE);
+        TextView b = label(c, s, 16, true, ON_ACCENT);
         b.setGravity(Gravity.CENTER);
         int p = dp(c, 14);
         b.setPadding(p, p, p, p);

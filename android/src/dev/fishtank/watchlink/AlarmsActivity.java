@@ -61,7 +61,9 @@ public class AlarmsActivity extends Activity {
 
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
+        sv.setBackgroundColor(Ui.bg(this));
         setContentView(sv);
+        Ui.style(this, sv);
     }
 
     private LinearLayout row(int i) {

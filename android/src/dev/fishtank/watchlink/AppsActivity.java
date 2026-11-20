@@ -42,6 +42,8 @@ public class AppsActivity extends Activity {
         }
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
+        sv.setBackgroundColor(Ui.bg(this));
         setContentView(sv);
+        Ui.style(this, sv);
     }
 }
