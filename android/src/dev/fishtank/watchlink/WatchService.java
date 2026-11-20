@@ -208,6 +208,12 @@ public class WatchService extends Service {
 
         @Override public void onServicesDiscovered(BluetoothGatt g, int st) {
             h.post(() -> {
+                for (BluetoothGattService sv : g.getServices()) {
+                    StringBuilder sb = new StringBuilder("gatt service " + sv.getUuid());
+                    for (BluetoothGattCharacteristic c : sv.getCharacteristics())
+                        sb.append("\n   ").append(c.getUuid()).append(" props=").append(c.getProperties());
+                    Log.i(TAG, sb.toString());
+                }
                 BluetoothGattService s = g.getService(IdoProtocol.SERVICE);
                 if (s == null) { setStatus("Watch service 0AF0 not found"); return; }
                 writeChar = s.getCharacteristic(IdoProtocol.WRITE);

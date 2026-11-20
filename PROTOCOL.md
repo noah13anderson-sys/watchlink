@@ -106,3 +106,16 @@ sunrise h, sunrise m, sunset h, sunset m,
 * **Temperatures are °C + 100.**
 * Weather type numbers used: 1 sunny, 2 cloudy, 3 overcast, 4 rain, 5 heavy rain, 6 storm, 7 snow, 8 sleet *(icons not all verified)*.
 * The weather screen only shows data after `03 2D AA`.
+
+## Firmware updates (how the official app does it; not implemented in WatchLink)
+
+* The SW2S exposes only `1800`, `1801`, `180F` and `0AF0` over BLE. It has **no separate update service** while running normally.
+* The official app (Flutter, IDO "Momax Wear" build) checks IDO's cloud for new firmware (`api/ota/dfu/checkUpdate`,
+  plus separate checks for fonts, faces, GPS/EPO data and "extension firmware"), sending the device ID (`0x1F42` = 8002) and current version.
+* The app supports three update stacks: Nordic DFU, IDO's own BLE DFU and SiFli OTA (platforms 98/99). The native
+  library has `VBUS_EVT_APP_OTA_START`, `OTA_AUTH` and `OTA_DIRECT_START` events. In the old IDO protocol, the `01` command group is OTA. *Unverified:* `01 01`
+  makes the watch reboot into its bootloader.
+* In update mode the watch advertises one of these services: `00001530-1212-efde-1523-785feabcd123` (legacy Nordic DFU), `FE59`
+  (Nordic secure DFU) or `00010203-0405-0607-0809-0a0b0c0d1912` (Telink OTA). The app then pushes the firmware image.
+  The app's connection code checks for those services so it can resume an interrupted update.
+* Faces, fonts and other files go over the normal `0AF0` link with the library's `data_tran` file transfer, not through the bootloader.
