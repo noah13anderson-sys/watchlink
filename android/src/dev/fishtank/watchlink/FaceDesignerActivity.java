@@ -32,6 +32,7 @@ public class FaceDesignerActivity extends Activity {
     private final List<Runnable> painters = new ArrayList<>();
     private SharedPreferences p;
     private boolean installing;
+    private LinearLayout dimRow;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -58,10 +59,28 @@ public class FaceDesignerActivity extends Activity {
         chips(root, FaceDesign.STYLES, () -> d.style, i -> d.style = i);
         Ui.section(this, root, "Background");
         chips(root, FaceDesign.BACKGROUNDS, () -> d.background, i -> {
-            if (i == FaceDesign.BACKGROUNDS.length - 1) {
+            if (i == FaceDesign.PHOTO) {
                 startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*"), PICK_PHOTO);
             } else d.background = i;
         });
+        dimRow = new LinearLayout(this);
+        dimRow.setGravity(Gravity.CENTER_VERTICAL);
+        dimRow.addView(Ui.label(this, "Photo brightness", 15, false, Ui.text(this)));
+        android.widget.SeekBar dim = new android.widget.SeekBar(this);
+        dim.setMax(200);
+        dim.setProgress(200 - d.photoDim);
+        dim.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
+        dim.setThumbTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
+        dim.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar b, int v, boolean user) {
+                if (user) { d.photoDim = 200 - v; redraw(); }
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar b) {}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar b) {}
+        });
+        dimRow.addView(dim, new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(dimRow);
+        painters.add(() -> dimRow.setVisibility(d.background == FaceDesign.PHOTO ? View.VISIBLE : View.GONE));
         Ui.section(this, root, "Time");
         chips(root, FaceDesign.FONTS, () -> d.font, i -> d.font = i);
         chips(root, new String[]{"Small", "Medium", "Large"}, () -> d.timeSize == 52 ? 0 : d.timeSize == 76 ? 2 : 1,
@@ -113,6 +132,9 @@ public class FaceDesignerActivity extends Activity {
     // ---- remember the last design ----
     private void load() {
         d.background = p.getInt("fd.bg", 0); d.font = p.getInt("fd.font", 0);
+        if (p.getInt("fd.bgv", 1) < 2 && d.background == 6) d.background = FaceDesign.PHOTO;   // old list ended at 6
+        if (d.background > FaceDesign.PHOTO) d.background = 0;
+        d.photoDim = p.getInt("fd.dim", 90);
         d.timeColor = p.getInt("fd.tc", 0xFFFFFFFF); d.accentColor = p.getInt("fd.ac", 0xFF00D3B8);
         d.position = p.getInt("fd.pos", 0); d.timeSize = p.getInt("fd.size", 64);
         d.date = p.getBoolean("fd.date", true); d.weekday = p.getBoolean("fd.week", true);
@@ -123,14 +145,14 @@ public class FaceDesignerActivity extends Activity {
         d.miles = p.getBoolean("unit.miles", false);
         d.style = p.getInt("fd.style", 0);
         if (d.font >= FaceDesign.FONTS.length) d.font = 0;
-        if (d.background == FaceDesign.BACKGROUNDS.length - 1) {
+        if (d.background == FaceDesign.PHOTO) {
             d.photo = BitmapFactory.decodeFile(new java.io.File(getFilesDir(), "face_photo.png").getPath());
             if (d.photo == null) d.background = 0;
         }
     }
 
     private void save() {
-        p.edit().putInt("fd.bg", d.background).putInt("fd.font", d.font).putInt("fd.tc", d.timeColor)
+        p.edit().putInt("fd.bg", d.background).putInt("fd.bgv", 2).putInt("fd.dim", d.photoDim).putInt("fd.font", d.font).putInt("fd.tc", d.timeColor)
                 .putInt("fd.ac", d.accentColor).putInt("fd.pos", d.position).putInt("fd.size", d.timeSize)
                 .putBoolean("fd.date", d.date).putBoolean("fd.week", d.weekday).putBoolean("fd.steps", d.steps)
                 .putBoolean("fd.batt", d.battery).putBoolean("fd.hr", d.heart).putBoolean("fd.kcal", d.calories)
@@ -154,7 +176,7 @@ public class FaceDesignerActivity extends Activity {
             int side = Math.min(full.getWidth(), full.getHeight());
             Bitmap sq = Bitmap.createBitmap(full, (full.getWidth() - side) / 2, (full.getHeight() - side) / 2, side, side);
             d.photo = Bitmap.createScaledBitmap(sq, FaceDesign.SIZE, FaceDesign.SIZE, true);
-            d.background = FaceDesign.BACKGROUNDS.length - 1;
+            d.background = FaceDesign.PHOTO;
             try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(getFilesDir(), "face_photo.png"))) {
                 d.photo.compress(Bitmap.CompressFormat.PNG, 100, out);
             }
@@ -217,23 +239,80 @@ public class FaceDesignerActivity extends Activity {
     }
 
     private void colors(LinearLayout root, IntGet sel, IntSet on) {
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
         LinearLayout row = new LinearLayout(this);
         int s = Ui.dp(this, 34);
-        for (int col : FaceDesign.COLORS) {
-            View v = new View(this);
-            painters.add(() -> {
-                GradientDrawable g = new GradientDrawable();
-                g.setShape(GradientDrawable.OVAL);
-                g.setColor(col);
-                g.setStroke(Ui.dp(this, sel.get() == col ? 3 : 1), sel.get() == col ? Ui.ACCENT : 0x44FFFFFF);
-                v.setBackground(g);
+        for (int col : FaceDesign.COLORS) row.addView(swatch(s, () -> col, sel, on, false), swatchLp(s));
+        // "+" = custom colour; shows the current colour when it isn't one of the presets
+        row.addView(swatch(s, sel::get, sel, on, true), swatchLp(s));
+        hs.addView(row);
+        root.addView(hs);
+    }
+
+    private LinearLayout.LayoutParams swatchLp(int s) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(s, s);
+        lp.setMargins(0, Ui.dp(this, 2), Ui.dp(this, 10), Ui.dp(this, 10));
+        return lp;
+    }
+
+    private static boolean preset(int c) {
+        for (int x : FaceDesign.COLORS) if (x == c) return true;
+        return false;
+    }
+
+    private View swatch(int s, IntGet colour, IntGet sel, IntSet on, boolean custom) {
+        TextView v = Ui.label(this, custom ? "+" : "", 18, true, Ui.text(this));
+        v.setGravity(Gravity.CENTER);
+        painters.add(() -> {
+            int col = colour.get();
+            boolean chosen = custom ? !preset(sel.get()) : sel.get() == col;
+            GradientDrawable g = new GradientDrawable();
+            g.setShape(GradientDrawable.OVAL);
+            g.setColor(custom && !chosen ? 0xFF2A2F44 : col);
+            g.setStroke(Ui.dp(this, chosen ? 3 : 1), chosen ? Ui.ACCENT : 0x44FFFFFF);
+            v.setBackground(g);
+            v.setText(custom && !chosen ? "+" : "");
+        });
+        v.setOnClickListener(x -> {
+            if (custom) pickColour(sel.get(), c -> { on.set(c); redraw(); });
+            else { on.set(colour.get()); redraw(); }
+        });
+        return v;
+    }
+
+    /** Hue / saturation / brightness picker. */
+    private void pickColour(int start, IntSet done) {
+        float[] hsv = new float[3];
+        android.graphics.Color.colorToHSV(start, hsv);
+        LinearLayout box = Ui.column(this);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, pad / 2, pad, 0);
+        View sample = new View(this);
+        GradientDrawable sg = Ui.rounded(start, Ui.dp(this, 12));
+        sample.setBackground(sg);
+        box.addView(sample, new LinearLayout.LayoutParams(-1, Ui.dp(this, 56)));
+        String[] names = {"Hue", "Saturation", "Brightness"};
+        int[] max = {360, 100, 100};
+        for (int k = 0; k < 3; k++) {
+            final int i = k;
+            box.addView(Ui.label(this, names[i], 14, false, 0xFF666666));
+            android.widget.SeekBar sb = new android.widget.SeekBar(this);
+            sb.setMax(max[i]);
+            sb.setProgress(Math.round(i == 0 ? hsv[0] : hsv[i] * 100));
+            sb.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(android.widget.SeekBar b, int v, boolean user) {
+                    hsv[i] = i == 0 ? v : v / 100f;
+                    sg.setColor(android.graphics.Color.HSVToColor(hsv));
+                }
+                @Override public void onStartTrackingTouch(android.widget.SeekBar b) {}
+                @Override public void onStopTrackingTouch(android.widget.SeekBar b) {}
             });
-            v.setOnClickListener(x -> { on.set(col); redraw(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(s, s);
-            lp.setMargins(0, Ui.dp(this, 2), Ui.dp(this, 10), Ui.dp(this, 10));
-            row.addView(v, lp);
+            box.addView(sb);
         }
-        root.addView(row);
+        new android.app.AlertDialog.Builder(this).setTitle("Custom colour").setView(box)
+                .setPositiveButton("Use", (d, w) -> done.set(android.graphics.Color.HSVToColor(hsv)))
+                .setNegativeButton("Cancel", null).show();
     }
 
     private void toggle(LinearLayout card, String title, BoolGet get, BoolSet set) {

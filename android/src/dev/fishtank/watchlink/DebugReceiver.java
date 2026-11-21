@@ -51,6 +51,7 @@ public class DebugReceiver extends BroadcastReceiver {
             d.seconds = i.getBooleanExtra("sec", false);
             d.ampm = i.getBooleanExtra("apm", false);
             d.timeSize = i.getIntExtra("size", 64);
+            d.accentColor = i.getIntExtra("accent", d.accentColor);
             d.background = i.getIntExtra("bg", 0);
             d.font = i.getIntExtra("font", 0);
             new Thread(() -> {
@@ -60,6 +61,12 @@ public class DebugReceiver extends BroadcastReceiver {
                     java.nio.file.Files.write(new java.io.File(c.getExternalFilesDir(null), "design.iwf").toPath(), iwf);
                     try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(c.getExternalFilesDir(null), "design.png"))) {
                         d.preview().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o);
+                    }
+                    if (i.getBooleanExtra("previewonly", false)) {
+                        new java.io.File(c.getExternalFilesDir(null), "design.png")
+                                .renameTo(new java.io.File(c.getExternalFilesDir(null), "bg" + d.background + ".png"));
+                        Log.i(WatchService.TAG, "debug design preview bg" + d.background);
+                        return;
                     }
                     FaceInstaller.install(name, iwf, (t, done) -> Log.i(WatchService.TAG, "debug design: " + t));
                 } catch (Exception e) { Log.w(WatchService.TAG, "debug design", e); }

@@ -28,13 +28,21 @@ public final class FaceDesign {
     public static final int SIZE = 240;
 
     public static final String[] STYLES = {"Digital", "Analog"};
-    public static final String[] BACKGROUNDS = {"Teal", "Sunset", "Night", "Forest", "Berry", "Black", "Photo"};
+    /** Gradients, then patterns drawn in the accent colour, then the photo (always last). */
+    public static final String[] BACKGROUNDS = {
+            "Teal", "Sunset", "Night", "Forest", "Berry", "Black", "Ocean", "Fire", "Lavender", "Mint", "Gold", "Steel",
+            "Rose", "Aurora", "Rings", "Stripes", "Dots", "Carbon", "Rays", "Grid", "Photo"};
+    public static final int PHOTO = BACKGROUNDS.length - 1;
+    private static final int FIRST_PATTERN = 14;
     private static final int[][] GRADIENTS = {
             {0xFF00A896, 0xFF02344F}, {0xFFFF7E5F, 0xFF4B1248}, {0xFF1E2233, 0xFF05060B},
-            {0xFF3A7D44, 0xFF0B2414}, {0xFFB0306A, 0xFF2A0A3A}, {0xFF000000, 0xFF000000}};
+            {0xFF3A7D44, 0xFF0B2414}, {0xFFB0306A, 0xFF2A0A3A}, {0xFF000000, 0xFF000000},
+            {0xFF2E86DE, 0xFF0A1A3F}, {0xFFFFB000, 0xFF8E1B10}, {0xFFB79CED, 0xFF3B2A6B}, {0xFF7BE0AD, 0xFF114B3A},
+            {0xFFE6C068, 0xFF5A3D0C}, {0xFF8E9AAF, 0xFF1F2430}, {0xFFFFAFCC, 0xFF6B2D5C}, {0xFF00E0A0, 0xFF3A0CA3}};
 
     public static final String[] FONTS = {"Bold", "Light", "Thin", "Black", "Serif", "Mono", "Condensed", "Rounded", "Script"};
-    public static final int[] COLORS = {0xFFFFFFFF, 0xFF00D3B8, 0xFFFFD166, 0xFFFF6A00, 0xFFED254E, 0xFF71F79F, 0xFF8AB4F8};
+    public static final int[] COLORS = {0xFFFFFFFF, 0xFF00D3B8, 0xFFFFD166, 0xFFFF6A00, 0xFFED254E, 0xFF71F79F,
+            0xFF8AB4F8, 0xFFC792EA, 0xFFFF8FAB, 0xFF5EEAD4, 0xFFFACC15, 0xFFB0B8C8, 0xFF60A5FA, 0xFF111111};
     public static final String[] POSITIONS = {"Middle", "Upper", "Lower"};
 
     public int style, background, font, timeColor = 0xFFFFFFFF, accentColor = 0xFF00D3B8, position, timeSize = 64;
@@ -66,19 +74,76 @@ public final class FaceDesign {
     private Bitmap baseBackground() {
         Bitmap b = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
-        if (background == BACKGROUNDS.length - 1 && photo != null) {
+        if (background == PHOTO && photo != null) {
             c.drawBitmap(photo, null, new Rect(0, 0, SIZE, SIZE), new Paint(Paint.FILTER_BITMAP_FLAG));
             Paint dim = new Paint();
             dim.setShader(new RadialGradient(SIZE / 2f, SIZE / 2f, SIZE * 0.75f,
                     Color.argb(photoDim, 0, 0, 0), Color.argb(Math.min(255, photoDim + 60), 0, 0, 0), Shader.TileMode.CLAMP));
             c.drawRect(0, 0, SIZE, SIZE, dim);
-        } else {
-            int[] g = GRADIENTS[Math.min(background, GRADIENTS.length - 1)];
-            Paint p = new Paint();
-            p.setShader(new LinearGradient(0, 0, SIZE, SIZE, g[0], g[1], Shader.TileMode.CLAMP));
-            c.drawRect(0, 0, SIZE, SIZE, p);
+            return b;
         }
+        if (background >= FIRST_PATTERN && background < PHOTO) { pattern(c, background - FIRST_PATTERN); return b; }
+        int[] g = GRADIENTS[Math.min(background, GRADIENTS.length - 1)];
+        Paint p = new Paint();
+        p.setShader(new LinearGradient(0, 0, SIZE, SIZE, g[0], g[1], Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, SIZE, SIZE, p);
         return b;
+    }
+
+    /** Patterns: dark base, shapes in the accent colour. */
+    private void pattern(Canvas c, int kind) {
+        Paint base = new Paint();
+        base.setShader(new RadialGradient(SIZE / 2f, SIZE / 2f, SIZE * 0.72f, 0xFF1A1D2B, 0xFF07080D, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, SIZE, SIZE, base);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        int rgb = accentColor & 0x00FFFFFF;
+        switch (kind) {
+            case 0:   // rings
+                p.setStyle(Paint.Style.STROKE);
+                for (int r = 14, i = 0; r < 170; r += 14, i++) {
+                    p.setStrokeWidth(i % 3 == 0 ? 2.5f : 1.2f);
+                    p.setColor(rgb | (i % 3 == 0 ? 0x70000000 : 0x38000000));
+                    c.drawCircle(SIZE / 2f, SIZE / 2f, r, p);
+                }
+                break;
+            case 1:   // diagonal stripes
+                p.setStrokeWidth(9);
+                p.setColor(rgb | 0x30000000);
+                for (int x = -SIZE; x < SIZE * 2; x += 26) c.drawLine(x, 0, x + SIZE, SIZE, p);
+                break;
+            case 2:   // dots, bigger towards the edge
+                for (int y = 6; y < SIZE; y += 16)
+                    for (int x = ((y / 16) % 2) * 8 + 6; x < SIZE; x += 16) {
+                        double d = Math.hypot(x - 120, y - 120) / 120;
+                        p.setColor(rgb | ((int) (40 + 90 * Math.min(1, d)) << 24));
+                        c.drawCircle(x, y, (float) (1.2 + 2.6 * Math.min(1, d)), p);
+                    }
+                break;
+            case 3:   // carbon weave
+                for (int y = 0; y < SIZE; y += 8)
+                    for (int x = 0; x < SIZE; x += 8) {
+                        boolean a = ((x + y) / 8) % 2 == 0;
+                        p.setColor(a ? 0xFF22252F : 0xFF14161C);
+                        c.drawRect(x, y, x + 8, y + 4, p);
+                        p.setColor(a ? 0xFF14161C : 0xFF22252F);
+                        c.drawRect(x, y + 4, x + 8, y + 8, p);
+                    }
+                Paint glow = new Paint();
+                glow.setShader(new RadialGradient(120, 120, 130, rgb | 0x40000000, rgb, Shader.TileMode.CLAMP));
+                c.drawRect(0, 0, SIZE, SIZE, glow);
+                break;
+            case 4:   // sun rays
+                for (int i = 0; i < 24; i++) {
+                    p.setColor(rgb | (i % 2 == 0 ? 0x34000000 : 0x14000000));
+                    c.drawArc(new RectF(-120, -120, 360, 360), i * 15f, 15f, true, p);
+                }
+                break;
+            default:  // grid
+                p.setStrokeWidth(1);
+                p.setColor(rgb | 0x40000000);
+                for (int x = 0; x <= SIZE; x += 20) { c.drawLine(x, 0, x, SIZE, p); c.drawLine(0, x, SIZE, x, p); }
+                break;
+        }
     }
 
     private static int evenCeil(float v) { int i = (int) Math.ceil(v); return i + (i & 1); }
