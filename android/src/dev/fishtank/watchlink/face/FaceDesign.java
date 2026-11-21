@@ -1,10 +1,15 @@
 package dev.fishtank.watchlink.face;
 
 import android.graphics.Bitmap;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -15,14 +20,20 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
- * A custom watch face for the 240x240 SW2S, turned into an IDO .iwf file with the same layout format as the
+ * A custom watch face for the 240x240 round SW2S, turned into an IDO .iwf file with the same layout format as the
  * cloud faces in the Momax app:
- *   "custom" widgets (time, date, week, step, calorie, heartrate, battery) draw numbers from small digit images,
+ *   "custom" widgets (time, date, week, step, calorie, heartrate, battery, ...) draw numbers from small digit images,
  *   a "watch" widget rotates hour/minute/second hand images around a point on the screen.
- * Small labels ("steps", ♥, "kcal") are drawn into the background next to the numbers.
+ * The icons next to the numbers are drawn into the background.
+ *
+ * Digital faces are a centred stack of rows: the date, the time, a row of up to three readouts (icon above the
+ * number) and, when more readouts are on, single lines (icon left of the number). Every row is checked against the
+ * round screen and the time shrinks until everything fits. Analog faces put readouts at 9, 3 and 6 o'clock and the
+ * date at 12.
  */
 public final class FaceDesign {
     public static final int SIZE = 240;
@@ -47,20 +58,29 @@ public final class FaceDesign {
     public static final int[] COLORS = {0xFFFFFFFF, 0xFF00D3B8, 0xFFFFD166, 0xFFFF6A00, 0xFFED254E, 0xFF71F79F,
             0xFF8AB4F8, 0xFFC792EA, 0xFFFF8FAB, 0xFF5EEAD4, 0xFFFACC15, 0xFFB0B8C8, 0xFF60A5FA, 0xFF111111};
     public static final String[] POSITIONS = {"Middle", "Upper", "Lower", "Big", "Stacked"};
-    private static final int POS_BIG = 3, POS_STACKED = 4;
+    private static final int POS_UPPER = 1, POS_LOWER = 2, POS_BIG = 3, POS_STACKED = 4;
 
     public int effect;
     public int style, background, font, timeColor = 0xFFFFFFFF, accentColor = 0xFF00D3B8, position, timeSize = 64;
     public boolean date = true, weekday = true, steps = true, battery = true, heart = false, calories = false,
             weather = false, distance = false, seconds = false, ampm = false;
-    /** Distance label: "km" or "mi" (follows the watch's unit setting). */
+    /** Distance unit shown with the distance: "MI" or "KM" (follows the watch's unit setting). */
     public boolean miles;
     /** Optional photo background, already cropped to 240x240. */
     public Bitmap photo;
     public int photoDim = 90;
 
     private static final String[] DAYS = {"mon", "tue", "wed", "thur", "fri", "sat", "sun"};
-    private static final int ROW_H = 26, GAP = 6;
+
+    /** Readouts: icon size, number text size and number image height. */
+    private static final int ICON = 18, VAL = 20, VAL_H = 24;
+    /** A readout in a row of columns (icon above the number), and on a line (icon left of the number). */
+    private static final int COL_H = ICON + 2 + VAL_H, LINE_H = VAL_H;
+    /** Keep this far inside the round edge. */
+    private static final int EDGE = 10;
+    private static final int IC_STEPS = 0, IC_HEART = 1, IC_FLAME = 2, IC_WEATHER = 3, IC_DIST = 4, IC_BATTERY = 5;
+
+    // ------------------------------------------------------------------------------------------------ background
 
     private Typeface typeface() {
         switch (font) {
@@ -98,7 +118,7 @@ public final class FaceDesign {
         return b;
     }
 
-    /** Patterns: dark base, shapes in the accent colour. */
+    /** Patterns: dark base, shapes in the accent colour, kept faint so the numbers stay easy to read. */
     private void pattern(Canvas c, int kind) {
         Paint base = new Paint();
         base.setShader(new RadialGradient(SIZE / 2f, SIZE / 2f, SIZE * 0.72f, 0xFF1A1D2B, 0xFF07080D, Shader.TileMode.CLAMP));
@@ -110,20 +130,20 @@ public final class FaceDesign {
                 p.setStyle(Paint.Style.STROKE);
                 for (int r = 14, i = 0; r < 170; r += 14, i++) {
                     p.setStrokeWidth(i % 3 == 0 ? 2.5f : 1.2f);
-                    p.setColor(rgb | (i % 3 == 0 ? 0x70000000 : 0x38000000));
+                    p.setColor(rgb | (i % 3 == 0 ? 0x5C000000 : 0x2E000000));
                     c.drawCircle(SIZE / 2f, SIZE / 2f, r, p);
                 }
                 break;
             case 1:   // diagonal stripes
                 p.setStrokeWidth(9);
-                p.setColor(rgb | 0x30000000);
+                p.setColor(rgb | 0x26000000);
                 for (int x = -SIZE; x < SIZE * 2; x += 26) c.drawLine(x, 0, x + SIZE, SIZE, p);
                 break;
             case 2:   // dots, bigger towards the edge
                 for (int y = 6; y < SIZE; y += 16)
                     for (int x = ((y / 16) % 2) * 8 + 6; x < SIZE; x += 16) {
                         double d = Math.hypot(x - 120, y - 120) / 120;
-                        p.setColor(rgb | ((int) (40 + 90 * Math.min(1, d)) << 24));
+                        p.setColor(rgb | ((int) (30 + 80 * Math.min(1, d)) << 24));
                         c.drawCircle(x, y, (float) (1.2 + 2.6 * Math.min(1, d)), p);
                     }
                 break;
@@ -142,17 +162,44 @@ public final class FaceDesign {
                 break;
             case 4:   // sun rays
                 for (int i = 0; i < 24; i++) {
-                    p.setColor(rgb | (i % 2 == 0 ? 0x34000000 : 0x14000000));
+                    p.setColor(rgb | (i % 2 == 0 ? 0x2A000000 : 0x10000000));
                     c.drawArc(new RectF(-120, -120, 360, 360), i * 15f, 15f, true, p);
                 }
                 break;
             default:  // grid
                 p.setStrokeWidth(1);
-                p.setColor(rgb | 0x40000000);
+                p.setColor(rgb | 0x30000000);
                 for (int x = 0; x <= SIZE; x += 20) { c.drawLine(x, 0, x, SIZE, p); c.drawLine(0, x, SIZE, x, p); }
                 break;
         }
     }
+
+    /**
+     * Ordered (Bayer 4x4) dither down to the watch's RGB565, so gradients and photos come out smooth instead of in
+     * bands. Each channel ends up on an exact 565 step, so IwfFile.raw565 keeps it as is.
+     */
+    private static Bitmap dither565(Bitmap src) {
+        final int[] bayer = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+        int w = src.getWidth(), h = src.getHeight();
+        int[] px = new int[w * h];
+        src.getPixels(px, 0, w, 0, 0, w, h);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x, c = px[i], t = bayer[(y & 3) * 4 + (x & 3)];
+                px[i] = (c & 0xFF000000) | step(c >> 16 & 0xFF, t, 3) << 16 | step(c >> 8 & 0xFF, t, 2) << 8 | step(c & 0xFF, t, 3);
+            }
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        out.setPixels(px, 0, w, 0, 0, w, h);
+        return out;
+    }
+
+    /** v rounded down to a multiple of 2^bits after adding (t + 0.5) / 16 of a step; averages back to v. */
+    private static int step(int v, int t, int bits) {
+        int s = 1 << bits, n = (32 * v + (2 * t + 1) * s) / (32 * s);
+        return Math.min(255 >> bits, n) << bits;
+    }
+
+    // ------------------------------------------------------------------------------------------------ time glyphs
 
     private boolean drawnFont() { return font == FONT_DIGITAL || font == FONT_DOTS; }
 
@@ -171,17 +218,53 @@ public final class FaceDesign {
         return w + (w & 1);
     }
 
+    /** The time font at one size, measured. Glyph images hug the digits so the gaps between rows look even. */
+    private static final class TimeFit {
+        Paint tp, secP, apmP;
+        /** Digit width, colon width, image height, baseline, top and bottom of the digits, row width, width beside. */
+        int dw, colonW, h, base, top, bottom, w, sideW;
+    }
+
+    private TimeFit timeFit(int size, boolean stacked, boolean side) {
+        TimeFit t = new TimeFit();
+        t.tp = paint(typeface(), size, timeColor);
+        t.dw = timeDigitWidth(t.tp);
+        t.colonW = colonWidth(t.tp);
+        int[] box = digitBox(t.tp);
+        t.h = box[0]; t.base = box[1]; t.top = box[2]; t.bottom = box[3];
+        t.w = stacked ? 2 * t.dw : 4 * t.dw + t.colonW;
+        if (side) {
+            t.secP = paint(typeface(), Math.round(size * 0.42f), timeColor);
+            t.apmP = paint(Typeface.create(Typeface.SANS_SERIF, 700, false), Math.max(14, Math.round(size * 0.24f)), accentColor);
+            t.sideW = Math.max(seconds ? 2 * timeDigitWidth(t.secP) : 0, ampm ? evenCeil(t.apmP.measureText("PM")) + 4 : 0);
+        }
+        return t;
+    }
+
+    /** {image height, baseline, top of the digits, bottom of the digits} for digits in this paint. */
+    private int[] digitBox(Paint p) {
+        if (drawnFont()) {   // drawn digits fill 8%..92% of the box
+            int h = Math.round(p.getTextSize()) + (effect == 0 ? 0 : 4);
+            h += h & 1;
+            return new int[]{h, Math.round(h * 0.92f), Math.round(h * 0.08f), Math.round(h * 0.92f)};
+        }
+        int pad = effect == 0 ? 3 : 5;
+        Rect b = new Rect();
+        p.getTextBounds("0123456789:", 0, 11, b);
+        int h = b.height() + 2 * pad;
+        h += h & 1;
+        int top = (h - b.height()) / 2;
+        return new int[]{h, top - b.top, top, top + b.height()};
+    }
+
     /** One character of the time in the chosen font and effect. */
-    private Bitmap timeGlyph(char ch, Paint tp, int w, int h) {
+    private Bitmap timeGlyph(char ch, Paint tp, int w, int h, int base) {
         Bitmap shape = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(shape);
         int pad = effect == 0 ? 0 : 2;
         if (font == FONT_DIGITAL) sevenSegment(c, ch, pad, pad, w - 2 * pad, h - 2 * pad, tp.getColor());
         else if (font == FONT_DOTS) dotMatrix(c, ch, pad, pad, w - 2 * pad, h - 2 * pad, tp.getColor());
-        else {
-            Paint.FontMetrics fm = tp.getFontMetrics();
-            c.drawText(String.valueOf(ch), w / 2f, h / 2f - (fm.ascent + fm.descent) / 2f, tp);
-        }
+        else c.drawText(String.valueOf(ch), w / 2f, base, tp);
         if (effect == 0) return shape;
         Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas o = new Canvas(out);
@@ -196,7 +279,7 @@ public final class FaceDesign {
             o.drawBitmap(mask, 2, 2, mp);
         } else {                    // glow in the extras colour
             mp.setColor(accentColor);
-            mp.setMaskFilter(new android.graphics.BlurMaskFilter(3, android.graphics.BlurMaskFilter.Blur.NORMAL));
+            mp.setMaskFilter(new BlurMaskFilter(3, BlurMaskFilter.Blur.NORMAL));
             o.drawBitmap(mask, 0, 0, mp);
             o.drawBitmap(mask, 0, 0, mp);
         }
@@ -259,15 +342,22 @@ public final class FaceDesign {
                 c.drawCircle(ox + cell * (k + 0.5f), oy + cell * (r + 0.5f), cell * 0.4f, rows[r].charAt(k) == '1' ? on : off);
     }
 
+    // ------------------------------------------------------------------------------------------------ text helpers
+
     private static int evenCeil(float v) { int i = (int) Math.ceil(v); return i + (i & 1); }
 
-    private static Bitmap glyph(String s, Paint p, int w, int h) {
+    /** Text in a w x h image with its baseline at base; align -1 left, 0 centre, 1 right. */
+    private static Bitmap text(String s, Paint p, int w, int h, float base, int align) {
         w += w & 1;   // the SW2S needs even image widths (odd ones come out skewed), see the note in IwfFile.raw565
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Paint.FontMetrics fm = p.getFontMetrics();
-        new Canvas(b).drawText(s, w / 2f, h / 2f - (fm.ascent + fm.descent) / 2f, p);
+        Paint pp = new Paint(p);
+        pp.setTextAlign(align < 0 ? Paint.Align.LEFT : align > 0 ? Paint.Align.RIGHT : Paint.Align.CENTER);
+        new Canvas(b).drawText(s, align < 0 ? 1 : align > 0 ? w - 1 : w / 2f, base, pp);
         return b;
     }
+
+    /** Width for a glyph image that just fits s. */
+    private static int fit(Paint p, String s) { return evenCeil(p.measureText(s)) + 2; }
 
     private static Paint paint(Typeface tf, float size, int color) {
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -278,278 +368,560 @@ public final class FaceDesign {
         return p;
     }
 
-    private static int digitWidth(Paint p) {
+    private static float maxDigitAdvance(Paint p) {
         float w = 0;
         for (char ch = '0'; ch <= '9'; ch++) w = Math.max(w, p.measureText(String.valueOf(ch)));
-        int d = (int) Math.ceil(w) + 2;
+        return w;
+    }
+
+    private static int digitWidth(Paint p) {
+        int d = (int) Math.ceil(maxDigitAdvance(p)) + 2;
         return d + (d & 1);
     }
 
-    /** A hand pointing up: image w x h, rotating around (w/2, pivot). */
-    private static Bitmap hand(int w, int h, int pivot, int color, boolean thin) {
+    // ------------------------------------------------------------------------------------------------ icons
+
+    /** An ICON-sized symbol in the accent colour centred on (cx, cy). Shapes are drawn in a -0.5..0.5 box. */
+    private void icon(Canvas c, int kind, float cx, float cy) {
+        int s = ICON + 6;
+        Bitmap b = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
+        Canvas k = new Canvas(b);
+        Paint f = new Paint(Paint.ANTI_ALIAS_FLAG);
+        f.setColor(accentColor);
+        if (kind == IC_DIST) {   // the unit itself
+            String u = miles ? "MI" : "KM";
+            f.setTypeface(Typeface.create(Typeface.SANS_SERIF, 700, false));
+            f.setTextSize(11.5f);
+            f.setTextAlign(Paint.Align.CENTER);
+            f.setLetterSpacing(0.04f);
+            Rect r = new Rect();
+            f.getTextBounds(u, 0, u.length(), r);
+            k.drawText(u, s / 2f, s / 2f - r.exactCenterY(), f);
+        } else {
+            k.translate(s / 2f, s / 2f);
+            k.scale(ICON, ICON);
+            switch (kind) {
+                case IC_STEPS: k.drawPath(footprints(), f); break;
+                case IC_HEART: k.drawPath(heart(), f); break;
+                case IC_FLAME: k.drawPath(flame(), f); break;
+                case IC_BATTERY: k.drawPath(batteryIcon(), f); break;
+                default: {   // weather: sun behind a cloud
+                    k.translate(0.03f, 0.06f);
+                    float sx = -0.13f, sy = -0.13f;
+                    k.drawCircle(sx, sy, 0.15f, f);
+                    Paint ray = new Paint(f);
+                    ray.setStyle(Paint.Style.STROKE);
+                    ray.setStrokeWidth(0.075f);
+                    ray.setStrokeCap(Paint.Cap.ROUND);
+                    for (int i = 0; i < 8; i++) {
+                        double a = Math.PI * i / 4;
+                        float dx = (float) Math.cos(a), dy = (float) Math.sin(a);
+                        k.drawLine(sx + dx * 0.23f, sy + dy * 0.23f, sx + dx * 0.32f, sy + dy * 0.32f, ray);
+                    }
+                    Path cloud = cloud();
+                    Paint gap = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    gap.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+                    gap.setStyle(Paint.Style.STROKE);
+                    gap.setStrokeWidth(0.16f);
+                    k.drawPath(cloud, gap);
+                    k.drawPath(cloud, f);
+                }
+            }
+        }
+        c.drawBitmap(b, Math.round(cx - s / 2f), Math.round(cy - s / 2f), null);
+    }
+
+    private static Path poly(float... xy) {
+        Path p = new Path();
+        p.moveTo(xy[0], xy[1]);
+        for (int i = 2; i < xy.length; i += 2) p.lineTo(xy[i], xy[i + 1]);
+        p.close();
+        return p;
+    }
+
+    private static Path circle(float x, float y, float r) {
+        Path p = new Path();
+        p.addCircle(x, y, r, Path.Direction.CW);
+        return p;
+    }
+
+    private static Path heart() {
+        Path p = circle(-0.23f, -0.15f, 0.26f);
+        p.op(circle(0.23f, -0.15f, 0.26f), Path.Op.UNION);
+        // sides run from the point at the bottom to where they touch the two circles
+        p.op(poly(0f, 0.43f, -0.41f, 0.038f, -0.23f, -0.15f, 0.23f, -0.15f, 0.41f, 0.038f), Path.Op.UNION);
+        return p;
+    }
+
+    /** Two shoe prints, the right one a step ahead. */
+    private static Path footprints() {
+        Path p = new Path();
+        for (int side = -1; side <= 1; side += 2) {
+            float x = side * 0.2f, y = -side * 0.07f;
+            Path foot = new Path();
+            foot.addOval(new RectF(x - 0.14f, y - 0.37f, x + 0.14f, y + 0.08f), Path.Direction.CW);
+            foot.addOval(new RectF(x - 0.11f, y + 0.13f, x + 0.11f, y + 0.34f), Path.Direction.CW);
+            Matrix m = new Matrix();
+            m.setRotate(side * 10, x, y);
+            foot.transform(m);
+            p.addPath(foot);
+        }
+        return p;
+    }
+
+    private static Path flame() {
+        Path p = new Path();
+        p.moveTo(0.04f, -0.46f);
+        p.cubicTo(0.30f, -0.26f, 0.38f, -0.04f, 0.36f, 0.14f);
+        p.cubicTo(0.34f, 0.34f, 0.18f, 0.46f, 0f, 0.46f);
+        p.cubicTo(-0.18f, 0.46f, -0.36f, 0.34f, -0.36f, 0.14f);
+        p.cubicTo(-0.36f, -0.02f, -0.26f, -0.12f, -0.18f, -0.22f);
+        p.cubicTo(-0.16f, -0.10f, -0.10f, -0.04f, -0.04f, -0.02f);
+        p.cubicTo(-0.06f, -0.20f, -0.04f, -0.34f, 0.04f, -0.46f);
+        p.close();
+        Path inner = new Path();
+        inner.moveTo(0f, 0.04f);
+        inner.cubicTo(0.08f, 0.12f, 0.15f, 0.18f, 0.15f, 0.25f);
+        inner.cubicTo(0.15f, 0.31f, 0.08f, 0.35f, 0f, 0.35f);
+        inner.cubicTo(-0.08f, 0.35f, -0.15f, 0.31f, -0.15f, 0.25f);
+        inner.cubicTo(-0.15f, 0.18f, -0.08f, 0.12f, 0f, 0.04f);
+        inner.close();
+        p.op(inner, Path.Op.DIFFERENCE);
+        return p;
+    }
+
+    private static Path cloud() {
+        Path c = circle(0.04f, 0.10f, 0.19f);
+        c.op(circle(0.25f, 0.18f, 0.14f), Path.Op.UNION);
+        c.op(circle(-0.17f, 0.21f, 0.12f), Path.Op.UNION);
+        Path base = new Path();
+        base.addRoundRect(new RectF(-0.29f, 0.17f, 0.39f, 0.33f), 0.08f, 0.08f, Path.Direction.CW);
+        c.op(base, Path.Op.UNION);
+        return c;
+    }
+
+    private static Path batteryIcon() {
+        Path p = new Path();
+        p.addRoundRect(new RectF(-0.46f, -0.25f, 0.36f, 0.25f), 0.09f, 0.09f, Path.Direction.CW);
+        Path inside = new Path();
+        inside.addRoundRect(new RectF(-0.37f, -0.16f, 0.27f, 0.16f), 0.04f, 0.04f, Path.Direction.CW);
+        p.op(inside, Path.Op.DIFFERENCE);
+        p.addRoundRect(new RectF(0.39f, -0.1f, 0.47f, 0.1f), 0.03f, 0.03f, Path.Direction.CW);   // terminal
+        p.addRoundRect(new RectF(-0.31f, -0.1f, 0.12f, 0.1f), 0.02f, 0.02f, Path.Direction.CW);  // charge
+        return p;
+    }
+
+    // ------------------------------------------------------------------------------------------------ analog hands
+
+    private static final int HOUR_W = 12, HOUR_H = 68, HOUR_PIV = 56;
+    private static final int MIN_W = 10, MIN_H = 104, MIN_PIV = 90;
+    private static final int SEC_W = 12, SEC_H = 124, SEC_PIV = 100;
+
+    /** A hand pointing up in a w x h image, turning around (w/2, piv): a rounded bar with a round hub. */
+    private static Bitmap hand(int w, int h, int piv, float width, float hub, int color) {
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         p.setColor(color);
-        c.drawRoundRect(new RectF(thin ? w / 2f - 1 : 0, 0, thin ? w / 2f + 1 : w, h), w / 2f, w / 2f, p);
-        p.setColor(0x55000000);
-        c.drawCircle(w / 2f, pivot, Math.min(w / 2f, 3), p);
+        float cx = w / 2f;
+        c.drawRoundRect(new RectF(cx - width / 2, 1, cx + width / 2, h - 1), width / 2, width / 2, p);
+        c.drawCircle(cx, piv, hub, p);
         return b;
     }
 
-    private final class Parts {
-        Bitmap bg;
-        Bitmap[] time = new Bitmap[11], small = new Bitmap[11], batt = new Bitmap[11];
-        /** g4: 0-9, '-', °C, °F (weather 13, heart rate 11); g5: 0-9, '.' (distance). */
-        Bitmap[] temp = new Bitmap[13], dist = new Bitmap[11];
-        Bitmap[] days = new Bitmap[7];
-        /** g6: seconds digits; apm: AM, PM. */
-        Bitmap[] sec = new Bitmap[10], apm = new Bitmap[2];
-        int timeX, sideX, secY, apmY, secH, apmH, secW, dw;
-        Bitmap hourHand, minHand, secHand;
-        int timeH, sw;
-        JSONArray items = new JSONArray();
-        /** Preview text per widget index. */
-        List<String> sample = new ArrayList<>();
+    /** Thin needle with a counterweight; its hub (drawn last by the watch) caps the centre. */
+    private Bitmap secondHand() {
+        Bitmap b = Bitmap.createBitmap(SEC_W, SEC_H, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(accentColor);
+        float cx = SEC_W / 2f;
+        c.drawRoundRect(new RectF(cx - 1, 0, cx + 1, SEC_H - 2), 1, 1, p);
+        c.drawRoundRect(new RectF(cx - 2.5f, SEC_PIV + 10, cx + 2.5f, SEC_H - 1), 2.5f, 2.5f, p);
+        c.drawCircle(cx, SEC_PIV, 4.5f, p);
+        p.setColor(0xFF15171F);
+        c.drawCircle(cx, SEC_PIV, 1.6f, p);
+        return b;
     }
 
-    private static final int HOUR_W = 10, HOUR_H = 66, HOUR_PIV = 54;
-    private static final int MIN_W = 8, MIN_H = 98, MIN_PIV = 84;
-    private static final int SEC_W = 4, SEC_H = 110, SEC_PIV = 90;
+    /** Minute and hour ticks; the quarters a little bolder and 12 o'clock in the accent colour. */
+    private void dial(Canvas c) {
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setStrokeCap(Paint.Cap.ROUND);
+        for (int i = 0; i < 60; i++) {
+            boolean hour = i % 5 == 0, quarter = i % 15 == 0;
+            p.setColor(i == 0 ? accentColor : hour ? timeColor : (timeColor & 0x00FFFFFF) | 0x55000000);
+            p.setStrokeWidth(quarter ? 5 : hour ? 3.5f : 1.5f);
+            float r1 = quarter ? 99 : hour ? 103 : 109, r2 = 114;
+            double a = Math.PI * 2 * i / 60;
+            float sx = (float) Math.sin(a), cy = (float) Math.cos(a);
+            c.drawLine(120 + sx * r1, 120 - cy * r1, 120 + sx * r2, 120 - cy * r2, p);
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------ layout
+
+    /** A number the watch fills in, with an icon drawn into the background. */
+    private static final class Readout {
+        final String type, font, sample, longest;
+        final int fontnum, icon;
+        final Integer style;
+
+        Readout(String type, String font, int fontnum, String sample, String longest, int icon, Integer style) {
+            this.type = type; this.font = font; this.fontnum = fontnum;
+            this.sample = sample; this.longest = longest; this.icon = icon; this.style = style;
+        }
+    }
+
+    /** The readouts that are switched on, in a fixed order. */
+    private List<Readout> readouts() {
+        List<Readout> r = new ArrayList<>();
+        if (steps) r.add(new Readout("step", "g2", 10, "5367", "88888", IC_STEPS, null));
+        if (heart) r.add(new Readout("heartrate", "g4", 11, "72", "188", IC_HEART, null));
+        if (calories) r.add(new Readout("calorie", "g2", 10, "320", "8888", IC_FLAME, null));
+        if (distance) r.add(new Readout("distance", "g5", 11, "4.19", "88.88", IC_DIST, null));
+        if (weather) r.add(new Readout("weather", "g4", 13, "21C", "-88C", IC_WEATHER, 2));
+        if (battery) r.add(new Readout("battery", "g3", 11, "80%", "100%", IC_BATTERY, null));
+        return r;
+    }
+
+    /** A row of readouts with the icons above the numbers. */
+    private static final class Cols { final List<Readout> r; Cols(List<Readout> r) { this.r = r; } }
+    /** Readouts on one line, each icon left of its number. */
+    private static final class Line { final List<Readout> r; Line(List<Readout> r) { this.r = r; } }
+
+    private static final class Parts {
+        Bitmap bg;
+        final Bitmap[] time = new Bitmap[11], g2 = new Bitmap[11], g3 = new Bitmap[11], g4 = new Bitmap[13],
+                g5 = new Bitmap[11], days = new Bitmap[7], sec = new Bitmap[10], apm = new Bitmap[2];
+        Bitmap hourHand, minHand, secHand;
+        /** Empty space above/below the digits in a number image; seconds and AM/PM placement beside the time. */
+        int valPad, secW, secH, secY, apmH, apmY;
+        final JSONArray items = new JSONArray();
+        /** Preview text per item. */
+        final List<String> sample = new ArrayList<>();
+
+        Bitmap[] font(String name) {
+            switch (name) {
+                case "g1": return time;
+                case "g3": return g3;
+                case "g4": return g4;
+                case "g5": return g5;
+                case "g6": return sec;
+                default: return g2;
+            }
+        }
+
+        int width(String font, String text) {
+            Bitmap[] set = font(font);
+            int w = 0;
+            for (char ch : text.toCharArray()) w += set[idx(ch)].getWidth();
+            return w;
+        }
+    }
 
     private Parts parts() throws Exception {
         Parts q = new Parts();
         q.bg = baseBackground();
         Canvas bgc = new Canvas(q.bg);
-        Typeface tf = typeface();
-        boolean stacked = style == 0 && position == POS_STACKED, big = style == 0 && position == POS_BIG;
-        boolean side = style == 0 && (seconds || ampm) && !stacked;
-        int size = stacked ? Math.round(timeSize * 1.25f) : big ? 110 : timeSize, timeW, sideW = 0;
-        // Height left for the time once the other rows are placed (the screen is round: keep ~14 px margins)
-        int smallCount = (steps ? 1 : 0) + (heart ? 1 : 0) + (calories ? 1 : 0) + (weather ? 1 : 0) + (distance ? 1 : 0);
-        int pairRows = big ? 0 : smallCount == 0 ? 0 : (position == 1 ? (smallCount + 1) / 2 : 1 + smallCount / 2);
-        int otherRows = pairRows + ((date || weekday) ? 1 : 0) + (battery ? 1 : 0);
-        int room = SIZE - 28 - otherRows * (ROW_H + 4);
-        if (style == 0) {
-            float k = (drawnFont() ? 1.0f : 1.1f);
-            int maxSize = Math.round((stacked ? room / 2f + (drawnFont() ? 0 : room / 16f) : room) / k) - (effect == 0 ? 0 : 4);
-            size = Math.max(32, Math.min(size, maxSize));
+        valueGlyphs(q);
+        List<Readout> all = readouts();
+        if (style == 1) analog(q, bgc, all);
+        else digital(q, bgc, all);
+        return q;
+    }
+
+    /** Number glyphs for the readouts and the date (all the same size and colour), and the weekday names. */
+    private void valueGlyphs(Parts q) {
+        Typeface medium = Typeface.create(Typeface.SANS_SERIF, 500, false);
+        Paint vp = paint(medium, VAL, timeColor), up = paint(medium, Math.round(VAL * 0.7f), timeColor);
+        Rect b = new Rect();
+        vp.getTextBounds("0123456789", 0, 10, b);
+        float base = (VAL_H - b.height()) / 2f - b.top;
+        q.valPad = (VAL_H - b.height()) / 2;
+        int sw = evenCeil(maxDigitAdvance(vp));   // same width for every digit, so numbers don't shift as they change
+        for (int i = 0; i < 10; i++) q.g2[i] = q.g3[i] = q.g4[i] = q.g5[i] = text(String.valueOf(i), vp, sw, VAL_H, base, 0);
+        q.g2[10] = text("/", vp, fit(vp, "/"), VAL_H, base, 0);
+        q.g3[10] = text("%", up, fit(up, "%"), VAL_H, base, 0);
+        q.g4[10] = text("-", vp, fit(vp, "-"), VAL_H, base, 0);
+        q.g4[11] = text("°C", up, fit(up, "°C"), VAL_H, base, 0);
+        q.g4[12] = text("°F", up, fit(up, "°F"), VAL_H, base, 0);
+        q.g5[10] = text(".", vp, fit(vp, "."), VAL_H, base, 0);
+        // Weekdays in accent capitals on the same baseline; right-aligned when the date follows them
+        Paint wp = paint(Typeface.create(Typeface.SANS_SERIF, 700, false), 17, accentColor);
+        wp.setLetterSpacing(0.06f);
+        int ww = 0;
+        for (String d : DAYS) ww = Math.max(ww, fit(wp, d.substring(0, 3).toUpperCase()));
+        int align = date && weekday ? 1 : 0;
+        for (int i = 0; i < 7; i++) q.days[i] = text(DAYS[i].substring(0, 3).toUpperCase(), wp, ww, VAL_H, base, align);
+    }
+
+    private void timeGlyphs(Parts q, TimeFit t, boolean side) {
+        for (int i = 0; i < 10; i++) q.time[i] = timeGlyph((char) ('0' + i), t.tp, t.dw, t.h, t.base);
+        q.time[10] = timeGlyph(':', t.tp, t.colonW, t.h, t.base);
+        if (!side) return;
+        if (seconds) {   // smaller digits sharing the big digits' baseline
+            int[] sb = digitBox(t.secP);
+            q.secH = sb[0];
+            q.secW = timeDigitWidth(t.secP);
+            for (int i = 0; i < 10; i++) q.sec[i] = timeGlyph((char) ('0' + i), t.secP, q.secW, q.secH, sb[1]);
+            q.secY = Math.max(0, t.base - sb[1]);
         }
-        Paint tp, secP = null, apmP = null;
-        while (true) {   // shrink the time until its row fits the screen
-            tp = paint(tf, size, timeColor);
-            int dw = timeDigitWidth(tp);
-            timeW = stacked ? 2 * dw : 4 * dw + colonWidth(tp);
-            if (side) {
-                secP = paint(tf, Math.round(size * 0.42f), timeColor);
-                apmP = paint(Typeface.create("sans-serif-medium", Typeface.BOLD), Math.max(14, Math.round(size * 0.24f)), accentColor);
-                q.secW = timeDigitWidth(secP);
-                sideW = Math.max(seconds ? 2 * q.secW : 0, ampm ? evenCeil(apmP.measureText("PM")) + 4 : 0);
-            }
-            int limit = big ? SIZE - 40 : SIZE - 24;
-            if (timeW + (side ? 6 + sideW : 0) <= limit || size <= 36) break;
+        if (ampm) {      // AM/PM level with the tops of the big digits
+            Rect b = new Rect();
+            t.apmP.getTextBounds("AMP", 0, 3, b);
+            q.apmH = b.height() + 6;
+            int top = 3, base = top - b.top, aw = evenCeil(t.apmP.measureText("PM")) + 4;
+            q.apm[0] = text("AM", t.apmP, aw, q.apmH, base, 0);
+            q.apm[1] = text("PM", t.apmP, aw, q.apmH, base, 0);
+            q.apmY = Math.max(0, t.top - top);
+        }
+    }
+
+    private void digital(Parts q, Canvas bgc, List<Readout> all) throws Exception {
+        boolean stacked = position == POS_STACKED, big = position == POS_BIG;
+        boolean side = (seconds || ampm) && !stacked;
+        List<Readout> cols = new ArrayList<>(), top = new ArrayList<>(), bottom = new ArrayList<>();
+        if (big) { for (Readout r : all) if (r.type.equals("battery")) bottom.add(r); }   // big time: battery only
+        else spread(all, cols, top, bottom);
+        Object dateRow = date || weekday ? "date" : null;
+        Object topRow = top.isEmpty() ? null : new Line(top), bottomRow = bottom.isEmpty() ? null : new Line(bottom);
+        Object colRow = cols.isEmpty() ? null : new Cols(cols);
+        List<Object> rows = new ArrayList<>();
+        switch (position) {
+            case POS_UPPER: addRows(rows, "time", dateRow, colRow, topRow, bottomRow); break;
+            case POS_LOWER: addRows(rows, topRow, colRow, dateRow, "time", bottomRow); break;
+            case POS_BIG: addRows(rows, dateRow, "time", bottomRow); break;
+            case POS_STACKED: addRows(rows, topRow, dateRow, "hour", "minute", colRow, bottomRow); break;
+            default: addRows(rows, topRow, dateRow, "time", colRow, bottomRow);
+        }
+        // The biggest time (up to the chosen size) with every row inside the round screen; spacing gives way first
+        int size = stacked ? Math.round(timeSize * 1.25f) : big ? 110 : timeSize;
+        int floor = Math.max(30, Math.round(timeSize * 0.7f));   // past this, crowding beats a tiny time
+        TimeFit t;
+        int[] ys;
+        while (true) {
+            t = timeFit(size, stacked, side);
+            ys = null;
+            for (int gap = 14; gap >= 6 && ys == null; gap -= 2) ys = stack(q, rows, t, side, gap, true);
+            if (ys != null) break;
+            if (size <= floor) { ys = stack(q, rows, t, side, 4, false); break; }
             size -= 2;
         }
-        int dw = timeDigitWidth(tp);
-        q.timeH = (int) Math.ceil(size * (drawnFont() ? 1.0f : 1.1f)) + (effect == 0 ? 0 : 4);
-        q.timeH += q.timeH & 1;
-        int colonW = colonWidth(tp);
-        for (int i = 0; i < 10; i++) q.time[i] = timeGlyph((char) ('0' + i), tp, dw, q.timeH);
-        q.time[10] = timeGlyph(':', tp, colonW, q.timeH);
-        q.dw = dw;
-        timeW = stacked ? 2 * dw : 4 * dw + colonW;
-        q.timeX = (SIZE - timeW - (side ? 6 + sideW : 0)) / 2;
-        q.sideX = q.timeX + timeW + 6;
-        if (side) {
-            Paint.FontMetrics fm = tp.getFontMetrics();
-            float base = q.timeH / 2f - (fm.ascent + fm.descent) / 2f;      // baseline of the big digits
-            if (seconds) {
-                q.secH = (int) Math.ceil(secP.getTextSize() * 1.1f);
-                q.secW = timeDigitWidth(secP);
-                for (int i = 0; i < 10; i++) q.sec[i] = timeGlyph((char) ('0' + i), secP, q.secW, q.secH);
-                Paint.FontMetrics sf = secP.getFontMetrics();
-                q.secY = Math.round(base - (q.secH / 2f - (sf.ascent + sf.descent) / 2f));   // same baseline
-            }
-            if (ampm) {
-                q.apmH = (int) Math.ceil(apmP.getTextSize() * 1.2f);
-                int aw = evenCeil(apmP.measureText("PM")) + 4;
-                apmP.setTextAlign(Paint.Align.CENTER);
-                q.apm[0] = glyph("AM", apmP, aw, q.apmH);
-                q.apm[1] = glyph("PM", apmP, aw, q.apmH);
-                q.apmY = Math.max(0, Math.round(base + fm.ascent) - 2);   // top of the digits
-            }
-        }
-
-        Paint sp = paint(Typeface.create("sans-serif-medium", Typeface.NORMAL), 20, accentColor);
-        q.sw = digitWidth(sp);
-        for (int i = 0; i < 10; i++) {
-            q.small[i] = glyph(String.valueOf(i), sp, q.sw, ROW_H);
-            q.batt[i] = q.temp[i] = q.dist[i] = q.small[i];
-        }
-        q.small[10] = glyph("/", sp, (int) Math.ceil(sp.measureText("/")) + 2, ROW_H);
-        q.batt[10] = glyph("%", sp, (int) Math.ceil(sp.measureText("%")) + 2, ROW_H);
-        q.temp[10] = glyph("-", sp, (int) Math.ceil(sp.measureText("-")) + 2, ROW_H);
-        q.temp[11] = glyph("\u00b0C", sp, (int) Math.ceil(sp.measureText("\u00b0C")) + 2, ROW_H);
-        q.temp[12] = glyph("\u00b0F", sp, (int) Math.ceil(sp.measureText("\u00b0F")) + 2, ROW_H);
-        q.dist[10] = glyph(".", sp, (int) Math.ceil(sp.measureText(".")) + 2, ROW_H);
-        Paint wp = paint(Typeface.create("sans-serif-medium", Typeface.BOLD), 18, timeColor);
-        for (int i = 0; i < 7; i++) q.days[i] = glyph(DAYS[i].substring(0, 3).toUpperCase(), wp, 50, ROW_H);
-        Paint lp = paint(Typeface.create("sans-serif", Typeface.NORMAL), 14, (timeColor & 0x00FFFFFF) | 0xB0000000);
-        lp.setTextAlign(Paint.Align.LEFT);
-
-        if (style == 1) {   // analog: ticks on the background, hands as images
-            Paint tick = new Paint(Paint.ANTI_ALIAS_FLAG);
-            tick.setStrokeCap(Paint.Cap.ROUND);
-            for (int i = 0; i < 60; i++) {
-                boolean hour = i % 5 == 0;
-                tick.setColor(hour ? timeColor : (timeColor & 0x00FFFFFF) | 0x66000000);
-                tick.setStrokeWidth(hour ? 4 : 1.5f);
-                double a = Math.PI * 2 * i / 60;
-                float r1 = hour ? 102 : 108, r2 = 115;
-                bgc.drawLine(120 + (float) (Math.sin(a) * r1), 120 - (float) (Math.cos(a) * r1),
-                        120 + (float) (Math.sin(a) * r2), 120 - (float) (Math.cos(a) * r2), tick);
-            }
-            q.hourHand = hand(HOUR_W, HOUR_H, HOUR_PIV, timeColor, false);
-            q.minHand = hand(MIN_W, MIN_H, MIN_PIV, timeColor, false);
-            q.secHand = hand(SEC_W, SEC_H, SEC_PIV, accentColor, true);
-        }
-
-        // Small readouts, packed two per row: {label, type, font, fontnum, digits, sample}
-        List<Object[]> small = new ArrayList<>();
-        if (steps) small.add(new Object[]{"steps", "step", "g2", 10, 5, "5367"});
-        if (heart) small.add(new Object[]{"\u2665", "heartrate", "g4", 11, 3, "72"});
-        if (calories) small.add(new Object[]{"kcal", "calorie", "g2", 10, 4, "320"});
-        if (weather) small.add(new Object[]{"\u26c5", "weather", "g4", 13, 4, "21C"});
-        if (distance) small.add(new Object[]{miles ? "mi" : "km", "distance", "g5", 11, 4, "4.19"});
-        // The SW2S screen is round: the row nearest the top edge holds one readout, the rest are paired.
-        List<List<Object[]>> pairs = new ArrayList<>();
-        boolean firstSingle = style == 1 || position != 1;
-        for (int i = 0; i < small.size(); ) {
-            int n = (i == 0 && firstSingle) ? 1 : 2;
-            pairs.add(small.subList(i, Math.min(i + n, small.size())));
-            i += n;
-        }
-
-        // Rows from top to bottom; the stack is centred on the screen.
-        List<Object> rows = new ArrayList<>();
-        boolean dateRow = date || weekday;
-        if (style == 1) {
-            if (!pairs.isEmpty()) rows.add(pairs.get(0));
-            rows.add("gap");
-            if (dateRow) rows.add("date");
-            for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
-        } else if (position == POS_BIG) {      // big time: only the date row and battery
-            rows.add("time"); if (dateRow) rows.add("date");
-        } else if (position == POS_STACKED) {  // hours above minutes
-            if (!pairs.isEmpty()) rows.add(pairs.get(0));
-            rows.add("hour"); rows.add("minute"); if (dateRow) rows.add("date");
-            for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
-        } else if (position == 1) {
-            rows.add("time"); if (dateRow) rows.add("date"); rows.addAll(pairs);
-        } else if (position == 2) {
-            rows.addAll(pairs); if (dateRow) rows.add("date"); rows.add("time");
-        } else {
-            if (!pairs.isEmpty()) rows.add(pairs.get(0));
-            rows.add("time"); if (dateRow) rows.add("date");
-            for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
-        }
-        if (battery) rows.add("battery");
-        int gap = GAP, total;
-        while (true) {
-            total = 0;
-            for (Object r : rows) total += ("time".equals(r) || "hour".equals(r) || "minute".equals(r) ? q.timeH
-                    : "gap".equals(r) ? 64 : ROW_H) + gap;
-            total -= gap;
-            if (total <= SIZE - 36 || gap == 0) break;
-            gap--;
-        }
-        int y = Math.max(16, (SIZE - total) / 2);
-
-        for (Object r : rows) {
-            if (r instanceof List) {
-                @SuppressWarnings("unchecked") List<Object[]> pr = (List<Object[]>) r;
-                // place the readouts side by side, centred, 14 px apart
-                float[] wdt = new float[pr.size()];
-                float sum = 14 * (pr.size() - 1);
-                for (int i = 0; i < pr.size(); i++) { wdt[i] = widthOf(q, lp, pr.get(i)); sum += wdt[i]; }
-                float x = (SIZE - sum) / 2f;
-                for (int i = 0; i < pr.size(); i++) {
-                    Object[] o = pr.get(i);
-                    labelled(q, bgc, lp, (String) o[0], (String) o[1], (String) o[2], (Integer) o[3], (Integer) o[4],
-                            Math.round(x + wdt[i] / 2), y, (String) o[5]);
-                    x += wdt[i] + 14;
-                }
-                y += ROW_H;
-            } else if ("time".equals(r)) {
-                add(q, item("time", q.timeX, y, timeW, q.timeH, "g1", 11, null), "10:08");
-                if (style == 0 && seconds)
-                    add(q, item("second", q.sideX, y + q.secY, 2 * q.secW, q.secH, "g6", 10, null), "32");
-                if (style == 0 && ampm)
-                    add(q, item("apm", q.sideX, y + q.apmY, q.apm[0].getWidth(), q.apmH, "apm", 2, null), "PM");
-                y += q.timeH;
+        timeGlyphs(q, t, side);
+        for (int i = 0; i < rows.size(); i++) {
+            Object r = rows.get(i);
+            int y = ys[i];
+            if ("time".equals(r)) {
+                int x = (SIZE - t.w - (side ? 6 + t.sideW : 0)) / 2;
+                add(q, item("time", x, y, t.w, t.h, "g1", 11, null, "center"), "10:08");
+                if (side && seconds)
+                    add(q, item("second", x + t.w + 6, y + q.secY, 2 * q.secW, q.secH, "g6", 10, null, "center"), "32");
+                if (side && ampm)
+                    add(q, item("apm", x + t.w + 6, y + q.apmY, q.apm[0].getWidth(), q.apmH, "apm", 2, null, "center"), "PM");
             } else if ("hour".equals(r) || "minute".equals(r)) {
-                add(q, item((String) r, (SIZE - 2 * q.dw) / 2, y, 2 * q.dw, q.timeH, "g1", 10, null),
-                        "hour".equals(r) ? "10" : "08");
-                y += q.timeH - (drawnFont() ? 0 : q.timeH / 8);   // tuck the two lines together a little
+                add(q, item((String) r, (SIZE - t.w) / 2, y, t.w, t.h, "g1", 10, null, "center"), "hour".equals(r) ? "10" : "08");
             } else if ("date".equals(r)) {
-                int dateW = 5 * q.sw + 4;
-                boolean both = date && weekday;
-                if (date) add(q, item("date", both ? SIZE / 2 - dateW - 4 : (SIZE - dateW) / 2, y, dateW, ROW_H, "g2", 11, 0), "11/21");
-                if (weekday) add(q, item("week", both ? SIZE / 2 + 8 : (SIZE - 50) / 2, y, 50, ROW_H, "week", 7, 0), "FRI");
-                y += ROW_H;
-            } else if ("battery".equals(r)) {
-                add(q, item("battery", (SIZE - 4 * q.sw) / 2, y, 4 * q.sw, ROW_H, "g3", 11, null), "80%");
-                y += ROW_H;
+                placeDate(q, y);
+            } else if (r instanceof Line) {
+                placeLine(q, bgc, ((Line) r).r, y);
             } else {
-                y += 64;
+                placeCols(q, bgc, ((Cols) r).r, y);
             }
-            y += gap;
         }
+    }
 
-        if (style == 1) {
-            JSONObject w = new JSONObject();
-            w.put("widget", "watch"); w.put("type", "time");
-            w.put("x", 0); w.put("y", 0); w.put("w", SIZE); w.put("h", SIZE);
-            w.put("fgcolor", "0xFFFFFFFF"); w.put("stepless_rotation", 0);
-            w.put("second", "files3.png"); w.put("seccenterx", SEC_W / 2); w.put("seccentery", SEC_PIV);
-            w.put("secanchorx", 120); w.put("secanchory", 120);
-            w.put("minute", "files2.png"); w.put("mincenterx", MIN_W / 2); w.put("mincentery", MIN_PIV);
-            w.put("minanchorx", 120); w.put("minanchory", 120);
-            w.put("hour", "files1.png"); w.put("hourcenterx", HOUR_W / 2); w.put("hourcentery", HOUR_PIV);
-            w.put("houranchorx", 120); w.put("houranchory", 120);
-            add(q, w, "");
+    private static void addRows(List<Object> rows, Object... r) {
+        for (Object o : r) if (o != null) rows.add(o);
+    }
+
+    /** Up to three readouts go in the row under the time; the others go on single lines above and below it. */
+    private static void spread(List<Readout> all, List<Readout> cols, List<Readout> top, List<Readout> bottom) {
+        List<Readout> rest = new ArrayList<>(all);
+        for (String type : new String[]{"battery", "weather", "distance", "calorie", "heartrate", "step"}) {
+            if (rest.size() <= 3) break;
+            for (Readout r : rest)
+                if (r.type.equals(type)) { rest.remove(r); (top.size() <= bottom.size() ? top : bottom).add(r); break; }
         }
-        return q;
+        if (rest.size() == 3)   // the longest number (steps) in the middle, where the screen is widest
+            for (Readout r : rest) if (r.type.equals("step")) { rest.remove(r); rest.add(1, r); break; }
+        cols.addAll(rest);
+    }
+
+    /**
+     * Top y of each row, stacked with about `gap` px of visible space between them and centred on the screen.
+     * When strict, returns null if the stack is too tall or a row would run past the round edge.
+     */
+    private int[] stack(Parts q, List<Object> rows, TimeFit t, boolean side, int gap, boolean strict) {
+        int n = rows.size(), total = 0;
+        int[] h = new int[n], g = new int[n];
+        for (int i = 0; i < n; i++) {
+            h[i] = rowH(rows.get(i), t);
+            if (i > 0) g[i] = Math.max(0, gap - padBelow(q, rows.get(i - 1), t) - padAbove(q, rows.get(i), t));
+            total += h[i] + g[i];
+        }
+        if (strict && total > SIZE - 24) return null;
+        int[] ys = new int[n];
+        // centre what shows, not the empty edges of the first and last images
+        int y = (SIZE - total) / 2 + (padBelow(q, rows.get(n - 1), t) - padAbove(q, rows.get(0), t)) / 2;
+        for (int i = 0; i < n; i++) {
+            y += g[i];
+            ys[i] = y;
+            Object r = rows.get(i);
+            if (strict && rowW(q, r, t, side) > 2 * room(y + padAbove(q, r, t), y + h[i] - padBelow(q, r, t))) return null;
+            y += h[i];
+        }
+        return ys;
+    }
+
+    private static int rowH(Object r, TimeFit t) {
+        if (r instanceof Cols) return COL_H;
+        if (r instanceof Line || "date".equals(r)) return LINE_H;
+        return t.h;
+    }
+
+    private static int padAbove(Parts q, Object r, TimeFit t) {
+        if (r instanceof Cols) return 1;
+        if (r instanceof Line || "date".equals(r)) return q.valPad;
+        return t.top;
+    }
+
+    private static int padBelow(Parts q, Object r, TimeFit t) {
+        if (r instanceof Cols || r instanceof Line || "date".equals(r)) return q.valPad;
+        return t.h - t.bottom;
+    }
+
+    private int rowW(Parts q, Object r, TimeFit t, boolean side) {
+        if ("time".equals(r)) return t.w + (side ? 6 + t.sideW : 0);
+        if ("hour".equals(r) || "minute".equals(r)) return t.w;
+        if ("date".equals(r)) return dateWidth(q);
+        if (r instanceof Line) return lineWidth(q, ((Line) r).r);
+        List<Readout> rs = ((Cols) r).r;
+        int w = 10 * (rs.size() - 1);
+        for (Readout x : rs) w += Math.max(ICON, q.width(x.font, x.longest));
+        return w;
+    }
+
+    /** Half the width of the round screen at height y. */
+    private static float halfChord(float y) {
+        float r = SIZE / 2f, dy = Math.abs(y - r);
+        return dy >= r ? 0 : (float) Math.sqrt(r * r - dy * dy);
+    }
+
+    /** Half the usable width for something between heights y1 and y2. */
+    private static float room(float y1, float y2) {
+        return Math.min(halfChord(y1), halfChord(y2)) - EDGE;
+    }
+
+    private int dateWidth(Parts q) {
+        int ww = q.days[0].getWidth(), dw = q.width("g2", "11/21");
+        return date && weekday ? ww + 6 + dw : weekday ? ww : dw;
+    }
+
+    /** Weekday (accent) then date, as one line of text centred on the screen. */
+    private void placeDate(Parts q, int y) throws Exception {
+        int ww = q.days[0].getWidth(), dw = evenCeil(q.width("g2", "88/88"));
+        if (date && weekday) {
+            int x = Math.round((SIZE - dateWidth(q)) / 2f);
+            add(q, item("week", x, y, ww, VAL_H, "week", 7, 0, "center"), "FRI");
+            add(q, item("date", x + ww + 6, y, dw, VAL_H, "g2", 11, 0, "left"), "11/21");
+        } else if (weekday) {
+            add(q, item("week", (SIZE - ww) / 2, y, ww, VAL_H, "week", 7, 0, "center"), "FRI");
+        } else {
+            add(q, item("date", (SIZE - dw) / 2, y, dw, VAL_H, "g2", 11, 0, "center"), "11/21");
+        }
+    }
+
+    private static int lineWidth(Parts q, List<Readout> rs) {
+        int w = 16 * (rs.size() - 1);
+        for (Readout r : rs) w += ICON + 4 + q.width(r.font, r.sample);
+        return w;
+    }
+
+    /** Icon then number, left-aligned so the number always sits right next to its icon. */
+    private void placeLine(Parts q, Canvas bgc, List<Readout> rs, int y) throws Exception {
+        float x = (SIZE - lineWidth(q, rs)) / 2f;
+        for (Readout r : rs) {
+            icon(bgc, r.icon, x + ICON / 2f, y + VAL_H / 2f);
+            add(q, item(r.type, Math.round(x + ICON + 4), y, evenCeil(q.width(r.font, r.longest)), VAL_H, r.font,
+                    r.fontnum, r.style, "left"), r.sample);
+            x += ICON + 4 + q.width(r.font, r.sample) + 16;
+        }
+    }
+
+    /** Readouts side by side, icons above the numbers, with hairlines between them. */
+    private void placeCols(Parts q, Canvas bgc, List<Readout> rs, int y) throws Exception {
+        int n = rs.size();
+        int[] w = new int[n];
+        for (int i = 0; i < n; i++) w[i] = Math.max(ICON, evenCeil(q.width(rs.get(i).font, rs.get(i).longest)));
+        float step = n == 2 ? 84 : 66;
+        if (n > 1) {
+            float half = room(y + 1, y + COL_H - q.valPad);
+            step = Math.min(step, (half - Math.max(w[0], w[n - 1]) / 2f) * 2 / (n - 1));
+            for (int i = 0; i + 1 < n; i++) step = Math.max(step, (w[i] + w[i + 1]) / 2f + 10);
+        }
+        Paint line = new Paint();
+        line.setColor((timeColor & 0x00FFFFFF) | 0x33000000);
+        for (int i = 0; i < n; i++) {
+            float cx = SIZE / 2f + (i - (n - 1) / 2f) * step;
+            placeCol(q, bgc, rs.get(i), cx, y);
+            if (i + 1 < n) {
+                int dx = Math.round(cx + step / 2f);
+                bgc.drawRect(dx, y + 4, dx + 1, y + COL_H - q.valPad, line);
+            }
+        }
+    }
+
+    private void placeCol(Parts q, Canvas bgc, Readout r, float cx, int y) throws Exception {
+        int w = evenCeil(q.width(r.font, r.longest));
+        icon(bgc, r.icon, cx, y + ICON / 2f);
+        add(q, item(r.type, Math.round(cx - w / 2f), y + ICON + 2, w, VAL_H, r.font, r.fontnum, r.style, "center"), r.sample);
+    }
+
+    /** Ticks and hands; readouts at 9, 3 and 6 o'clock, the date at 12 and any extras on lines. */
+    private void analog(Parts q, Canvas bgc, List<Readout> all) throws Exception {
+        dial(bgc);
+        int n = Math.min(3, all.size());
+        int[][] spots = n == 1 ? new int[][]{{120, 150}} : n == 2 ? new int[][]{{62, 98}, {178, 98}}
+                : new int[][]{{62, 98}, {178, 98}, {120, 150}};
+        for (int i = 0; i < n; i++) placeCol(q, bgc, all.get(i), spots[i][0], spots[i][1]);
+        List<Readout> rest = new ArrayList<>(all.subList(n, all.size()));
+        boolean dateRow = date || weekday;
+        if (dateRow) placeDate(q, 50);
+        else if (!rest.isEmpty()) placeCol(q, bgc, rest.remove(0), 120, 44);   // 12 o'clock
+        int[] lines = dateRow ? new int[]{198, 76, 24} : new int[]{198, 20};
+        for (int i = 0; i < rest.size() && i < lines.length; i++) placeLine(q, bgc, rest.subList(i, i + 1), lines[i]);
+
+        q.hourHand = hand(HOUR_W, HOUR_H, HOUR_PIV, 7, 5.5f, timeColor);
+        q.minHand = hand(MIN_W, MIN_H, MIN_PIV, 5, 4.5f, timeColor);
+        q.secHand = secondHand();
+        JSONObject w = new JSONObject();
+        w.put("widget", "watch"); w.put("type", "time");
+        w.put("x", 0); w.put("y", 0); w.put("w", SIZE); w.put("h", SIZE);
+        w.put("fgcolor", "0xFFFFFFFF"); w.put("stepless_rotation", 0);
+        w.put("second", "files3.png"); w.put("seccenterx", SEC_W / 2); w.put("seccentery", SEC_PIV);
+        w.put("secanchorx", 120); w.put("secanchory", 120);
+        w.put("minute", "files2.png"); w.put("mincenterx", MIN_W / 2); w.put("mincentery", MIN_PIV);
+        w.put("minanchorx", 120); w.put("minanchory", 120);
+        w.put("hour", "files1.png"); w.put("hourcenterx", HOUR_W / 2); w.put("hourcentery", HOUR_PIV);
+        w.put("houranchorx", 120); w.put("houranchory", 120);
+        add(q, w, "");
     }
 
     private static void add(Parts q, JSONObject o, String sample) { q.items.put(o); q.sample.add(sample); }
 
-    private static float widthOf(Parts q, Paint lp, Object[] o) {
-        int digits = (Integer) o[4];
-        return lp.measureText((String) o[0]) + 4 + digits * q.sw + ("weather".equals(o[1]) ? 2 * q.sw : 0);
-    }
-
-    /** A number with a small label drawn into the background on its left, centred around cx. */
-    private void labelled(Parts q, Canvas bgc, Paint lp, String label, String type, String font, int fontnum,
-                          int digits, int cx, int y, String sample) throws Exception {
-        float lw = lp.measureText(label) + 4;
-        int nw = digits * q.sw + (type.equals("weather") ? 2 * q.sw : 0);
-        float x0 = cx - (lw + nw) / 2f;
-        Paint.FontMetrics fm = lp.getFontMetrics();
-        bgc.drawText(label, x0, y + ROW_H / 2f - (fm.ascent + fm.descent) / 2f, lp);
-        add(q, item(type, Math.round(x0 + lw), y, nw, ROW_H, font, fontnum, type.equals("weather") ? 2 : null), sample);
-    }
-
-    private static JSONObject item(String type, int x, int y, int w, int h, String font, int num, Integer style)
-            throws Exception {
+    private static JSONObject item(String type, int x, int y, int w, int h, String font, int num, Integer style,
+                                   String align) throws Exception {
         JSONObject o = new JSONObject();
         o.put("widget", "custom"); o.put("type", type);
         o.put("x", x); o.put("y", y); o.put("w", w); o.put("h", h);
-        o.put("fgcolor", "0xFFFFFFFF"); o.put("fgrender", "0x0"); o.put("align", "center");
+        o.put("fgcolor", "0xFFFFFFFF"); o.put("fgrender", "0x0"); o.put("align", align);
         if (style != null) o.put("style", style);
         o.put("font", font); o.put("fontnum", num);
         return o;
     }
+
+    // ------------------------------------------------------------------------------------------------ output
 
     /** What the watch will show (10:08, Fri 11/21, 5367 steps, 72 bpm, 320 kcal, 21°C, 4.19 km, 80%). */
     public Bitmap preview() {
@@ -560,29 +932,21 @@ public final class FaceDesign {
             for (int i = 0; i < q.items.length(); i++) {
                 JSONObject o = q.items.getJSONObject(i);
                 String t = o.getString("type");
+                int x = o.getInt("x"), y = o.getInt("y");
                 if (o.getString("widget").equals("watch")) {
                     drawHand(c, q.hourHand, HOUR_PIV, (10 + 8 / 60f) * 30);
                     drawHand(c, q.minHand, MIN_PIV, 8 * 6);
                     drawHand(c, q.secHand, SEC_PIV, 32 * 6);
                     continue;
                 }
-                if (t.equals("week")) { c.drawBitmap(q.days[4], o.getInt("x"), o.getInt("y"), null); continue; }
-                if (t.equals("apm")) { c.drawBitmap(q.apm[1], o.getInt("x"), o.getInt("y"), null); continue; }
-                if (t.equals("second")) {
-                    c.drawBitmap(q.sec[3], o.getInt("x"), o.getInt("y"), null);
-                    c.drawBitmap(q.sec[2], o.getInt("x") + q.secW, o.getInt("y"), null);
-                    continue;
-                }
-                String fnt = o.getString("font");
-                Bitmap[] set = t.equals("time") || t.equals("hour") || t.equals("minute") ? q.time : fnt.equals("g3") ? q.batt : fnt.equals("g4") ? q.temp
-                        : fnt.equals("g5") ? q.dist : q.small;
+                if (t.equals("week")) { c.drawBitmap(q.days[4], x, y, null); continue; }
+                if (t.equals("apm")) { c.drawBitmap(q.apm[1], x, y, null); continue; }
+                Bitmap[] set = q.font(o.getString("font"));
                 String text = q.sample.get(i);
-                int w = 0;
-                for (char ch : text.toCharArray()) w += set[idx(ch)].getWidth();
-                int x = o.getInt("x") + (o.getInt("w") - w) / 2;
+                if (!"left".equals(o.optString("align"))) x += (o.getInt("w") - q.width(o.getString("font"), text)) / 2;
                 for (char ch : text.toCharArray()) {
                     Bitmap g = set[idx(ch)];
-                    c.drawBitmap(g, x, o.getInt("y"), null);
+                    c.drawBitmap(g, x, y, null);
                     x += g.getWidth();
                 }
             }
@@ -617,9 +981,10 @@ public final class FaceDesign {
         iwf.put("battery", false); iwf.put("compress", "LZ4");
         iwf.put("item", q.items); iwf.put("bkground", "files0.png");
         JSONArray fl = new JSONArray();
-        List<String> fontNames = new ArrayList<>(java.util.Arrays.asList("g1", "g2", "g3", "g4", "g5", "week"));
-        if (style == 0 && seconds) fontNames.add("g6");
-        if (style == 0 && ampm) fontNames.add("apm");
+        List<String> fontNames = new ArrayList<>(Arrays.asList("g2", "g3", "g4", "g5", "week"));
+        if (q.time[0] != null) fontNames.add(0, "g1");   // analog faces have no digital time
+        if (style == 0 && seconds && position != POS_STACKED) fontNames.add("g6");
+        if (style == 0 && ampm && position != POS_STACKED) fontNames.add("apm");
         for (String n : fontNames) {
             JSONObject f = new JSONObject();
             f.put("name", n); f.put("bpp", 16); f.put("format", "png");
@@ -631,20 +996,20 @@ public final class FaceDesign {
         IwfFile f = new IwfFile();
         f.addText("iwf.json", iwf.toString());
         f.addText("font.json", fonts.toString());
-        f.add("files0.png", raw(q.bg));
+        f.add("files0.png", raw(dither565(q.bg)));
         if (style == 1) {
             f.add("files1.png", raw(q.hourHand));
             f.add("files2.png", raw(q.minHand));
             f.add("files3.png", raw(q.secHand));
         }
         f.add("preview.png", raw(Bitmap.createScaledBitmap(preview(), 120, 120, true)));
-        for (int i = 0; i < 11; i++) f.add("g1_" + i, raw(q.time[i]));
-        for (int i = 0; i < 11; i++) f.add("g2_" + i, raw(q.small[i]));
-        for (int i = 0; i < 11; i++) f.add("g3_" + i, raw(q.batt[i]));
-        for (int i = 0; i < 13; i++) f.add("g4_" + i, raw(q.temp[i]));
-        for (int i = 0; i < 11; i++) f.add("g5_" + i, raw(q.dist[i]));
-        if (style == 0 && seconds) for (int i = 0; i < 10; i++) f.add("g6_" + i, raw(q.sec[i]));
-        if (style == 0 && ampm) { f.add("apm_en_am", raw(q.apm[0])); f.add("apm_en_pm", raw(q.apm[1])); }
+        if (q.time[0] != null) for (int i = 0; i < 11; i++) f.add("g1_" + i, raw(q.time[i]));
+        for (int i = 0; i < 11; i++) f.add("g2_" + i, raw(q.g2[i]));
+        for (int i = 0; i < 11; i++) f.add("g3_" + i, raw(q.g3[i]));
+        for (int i = 0; i < 13; i++) f.add("g4_" + i, raw(q.g4[i]));
+        for (int i = 0; i < 11; i++) f.add("g5_" + i, raw(q.g5[i]));
+        if (fontNames.contains("g6")) for (int i = 0; i < 10; i++) f.add("g6_" + i, raw(q.sec[i]));
+        if (fontNames.contains("apm")) { f.add("apm_en_am", raw(q.apm[0])); f.add("apm_en_pm", raw(q.apm[1])); }
         for (int i = 0; i < 7; i++) f.add("week_en_" + DAYS[i], raw(q.days[i]));
         return f.build();
     }

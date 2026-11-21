@@ -48,6 +48,11 @@ public class DebugReceiver extends BroadcastReceiver {
             d.weather = i.getBooleanExtra("weather", false);
             d.distance = i.getBooleanExtra("dist", false);
             d.steps = i.getBooleanExtra("steps", true);
+            d.date = i.getBooleanExtra("date", true);
+            d.weekday = i.getBooleanExtra("week", true);
+            d.battery = i.getBooleanExtra("batt", true);
+            d.timeColor = i.getIntExtra("tc", d.timeColor);
+            d.miles = i.getBooleanExtra("miles", false);
             d.seconds = i.getBooleanExtra("sec", false);
             d.ampm = i.getBooleanExtra("apm", false);
             d.timeSize = i.getIntExtra("size", 64);
