@@ -209,7 +209,7 @@ public class FaceDesignerActivity extends Activity {
         new Thread(() -> {
             try {
                 byte[] iwf = d.build(name.replace(".iwf", ""));
-                FaceInstaller.install(name, iwf, (text, done) -> { status.setText(text); if (done) installing = false; });
+                FaceInstaller.installMine(name, iwf, (text, done) -> { status.setText(text); if (done) installing = false; });
             } catch (Exception e) {
                 runOnUiThread(() -> { installing = false; status.setText("Couldn't build the face: " + e); });
             }

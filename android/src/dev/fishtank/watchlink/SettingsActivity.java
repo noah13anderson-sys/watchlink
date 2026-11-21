@@ -116,6 +116,8 @@ public class SettingsActivity extends Activity {
         LinearLayout icons = Ui.card(this, root);
         toggle(icons, "App icons on the watch", "Show WhatsApp, Telegram, Gmail… icons instead of the SMS icon",
                 "appIcons", true, () -> {});
+        toggle(icons, "Low watch battery alert", "A phone notification when the watch gets down to 20%",
+                "lowBatteryAlert", true, () -> {});
 
         // ---- Watch ----
         Ui.section(this, root, "Watch");
@@ -192,16 +194,27 @@ public class SettingsActivity extends Activity {
                 i("user.year", 1995), 1, 1));
     }
 
-    /** Sends shortly after the last change, so dragging through several values sends once. */
-    private Runnable pending;
+    /**
+     * Sends shortly after the last change of the same setting, so quick changes to one setting send once while
+     * changes to different settings (different command bytes) are all sent.
+     */
+    private final java.util.Map<Integer, Runnable> pending = new java.util.HashMap<>();
     private void send(byte[] pkt) {
         if (WatchService.instance == null) {
             Toast.makeText(this, "Not connected: saved, will need sending again", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (pending != null) h.removeCallbacks(pending);
-        pending = () -> WatchService.send(java.util.Collections.singletonList(pkt));
-        h.postDelayed(pending, 300);
+        int kind = (pkt[0] & 0xff) << 8 | (pkt[1] & 0xff);
+        Runnable old = pending.remove(kind);
+        if (old != null) h.removeCallbacks(old);
+        Runnable r = () -> { pending.remove(kind); WatchService.send(java.util.Collections.singletonList(pkt)); };
+        pending.put(kind, r);
+        h.postDelayed(r, 300);
+    }
+
+    @Override protected void onDestroy() {
+        for (Runnable r : new ArrayList<>(pending.values())) { h.removeCallbacks(r); r.run(); }   // don't lose a change on the way out
+        super.onDestroy();
     }
 
     // ---- widgets ----
@@ -243,8 +256,8 @@ public class SettingsActivity extends Activity {
 
     private void timeRange(LinearLayout card, String title, String k, int sh, int sm, int eh, int em, Runnable onChange) {
         TextView val = valueRow(card, title);
-        binders.add(() -> val.setText(AlarmsActivity.fmt(i(k + ".sh", sh), i(k + ".sm", sm)) + " – "
-                + AlarmsActivity.fmt(i(k + ".eh", eh), i(k + ".em", em))));
+        binders.add(() -> val.setText(AlarmsActivity.show(this, i(k + ".sh", sh), i(k + ".sm", sm)) + " – "
+                + AlarmsActivity.show(this, i(k + ".eh", eh), i(k + ".em", em))));
         ((LinearLayout) val.getParent()).setOnClickListener(v ->
                 new TimePickerDialog(this, (tp, h1, m1) -> {
                     p.edit().putInt(k + ".sh", h1).putInt(k + ".sm", m1).apply();
@@ -252,9 +265,9 @@ public class SettingsActivity extends Activity {
                         p.edit().putInt(k + ".eh", h2).putInt(k + ".em", m2).apply();
                         bindAll();
                         onChange.run();
-                    }, i(k + ".eh", eh), i(k + ".em", em), true).show();
+                    }, i(k + ".eh", eh), i(k + ".em", em), android.text.format.DateFormat.is24HourFormat(this)).show();
                     Toast.makeText(this, "Now pick the end time", Toast.LENGTH_SHORT).show();
-                }, i(k + ".sh", sh), i(k + ".sm", sm), true).show());
+                }, i(k + ".sh", sh), i(k + ".sm", sm), android.text.format.DateFormat.is24HourFormat(this)).show());
     }
 
     private void number(LinearLayout card, String title, String key, int def, int min, int max, Runnable onChange) {

@@ -480,7 +480,13 @@ public final class IdoProtocol {
      * 28 YouTube, 29 Pinterest, 32 TikTok. WhatsApp (8) verified on the SW2S; the rest follow the same numbering.
      */
     public static int appType(String pkg) {
-        if (pkg == null) return 1;
+        int t = knownAppType(pkg);
+        return t == 0 ? 1 : t;
+    }
+
+    /** The watch's own icon number for this app, or 0 when it has none (then the SMS icon, type 1, is used). */
+    public static int knownAppType(String pkg) {
+        if (pkg == null) return 0;
         switch (pkg) {
             case "com.google.android.apps.messaging": case "com.android.mms": case "com.samsung.android.messaging":
             case "com.coloros.mms": case "com.oplus.mms": return 1;
@@ -510,7 +516,7 @@ public final class IdoProtocol {
             case "com.google.android.youtube": return 28;
             case "com.pinterest": return 29;
             case "com.zhiliaoapp.musically": case "com.ss.android.ugc.trill": return 32;
-            default: return 1;
+            default: return 0;
         }
     }
 

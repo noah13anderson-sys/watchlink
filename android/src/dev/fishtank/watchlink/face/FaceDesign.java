@@ -679,6 +679,7 @@ public final class FaceDesign {
     }
 
     private void digital(Parts q, Canvas bgc, List<Readout> all) throws Exception {
+        if (position == POS_STACKED && !all.isEmpty()) { stackedSplit(q, bgc, all); return; }
         boolean stacked = position == POS_STACKED, big = position == POS_BIG;
         boolean side = (seconds || ampm) && !stacked;
         List<Readout> cols = new ArrayList<>(), top = new ArrayList<>(), bottom = new ArrayList<>();
@@ -842,11 +843,56 @@ public final class FaceDesign {
     private void placeLine(Parts q, Canvas bgc, List<Readout> rs, int y) throws Exception {
         float x = (SIZE - lineWidth(q, rs)) / 2f;
         for (Readout r : rs) {
-            icon(bgc, r.icon, x + ICON / 2f, y + VAL_H / 2f);
-            add(q, item(r.type, Math.round(x + ICON + 4), y, evenCeil(q.width(r.font, r.longest)), VAL_H, r.font,
-                    r.fontnum, r.style, "left"), r.sample);
+            placeItem(q, bgc, r, x, y);
             x += ICON + 4 + q.width(r.font, r.sample) + 16;
         }
+    }
+
+    private void placeItem(Parts q, Canvas bgc, Readout r, float x, int y) throws Exception {
+        icon(bgc, r.icon, x + ICON / 2f, y + VAL_H / 2f);
+        add(q, item(r.type, Math.round(x + ICON + 4), y, evenCeil(q.width(r.font, r.longest)), VAL_H, r.font,
+                r.fontnum, r.style, "left"), r.sample);
+    }
+
+    /**
+     * Stacked with readouts: big hours over minutes on the left, up to four readouts in a column on the right, the
+     * date above and any others on a line below. The time grows until a corner would leave the round screen.
+     */
+    private void stackedSplit(Parts q, Canvas bgc, List<Readout> all) throws Exception {
+        List<Readout> right = new ArrayList<>(all.subList(0, Math.min(4, all.size())));
+        List<Readout> rest = new ArrayList<>(all.subList(right.size(), all.size()));
+        boolean dateRow = date || weekday;
+        int colW = 0;
+        for (Readout r : right) colW = Math.max(colW, ICON + 4 + q.width(r.font, r.longest));
+        int lineGap = 8, colH = right.size() * LINE_H + (right.size() - 1) * lineGap, space = 14;
+        int size = Math.round(timeSize * 1.5f), floor = Math.max(30, Math.round(timeSize * 0.7f));
+        TimeFit t;
+        int x0, yTop, gapHM, blockH;
+        while (true) {
+            t = timeFit(size, true, false);
+            gapHM = Math.max(4, t.h / 10);
+            blockH = 2 * t.h + gapHM;
+            int above = dateRow ? LINE_H + 6 : 0, below = rest.isEmpty() ? 0 : LINE_H + 6;
+            yTop = (SIZE - (above + blockH + below)) / 2 + above;
+            int w = t.w + space + colW;
+            float colTop = yTop + (blockH - colH) / 2f;
+            float lo = SIZE / 2f - room(yTop + t.top, yTop + blockH - (t.h - t.bottom));   // left edge of the time
+            float hi = SIZE / 2f + room(colTop + q.valPad, colTop + colH - q.valPad) - w;   // so the column fits
+            x0 = Math.round(Math.max(lo, Math.min(hi, (SIZE - w) / 2f)));
+            boolean fits = lo <= hi && above + blockH + below <= SIZE - 28
+                    && (!dateRow || dateWidth(q) <= 2 * room(yTop - above + q.valPad, yTop - 6 - q.valPad))
+                    && (rest.isEmpty() || lineWidth(q, rest) <= 2 * room(yTop + blockH + 6 + q.valPad, yTop + blockH + 6 + LINE_H - q.valPad));
+            if (fits || size <= floor) break;
+            size -= 2;
+        }
+        timeGlyphs(q, t, false);
+        if (dateRow) placeDate(q, yTop - LINE_H - 6);
+        add(q, item("hour", x0, yTop, t.w, t.h, "g1", 10, null, "center"), "10");
+        add(q, item("minute", x0, yTop + t.h + gapHM, t.w, t.h, "g1", 10, null, "center"), "08");
+        int cx = x0 + t.w + space;
+        int cy = Math.round(yTop + (blockH - colH) / 2f);
+        for (int i = 0; i < right.size(); i++) placeItem(q, bgc, right.get(i), cx, cy + i * (LINE_H + lineGap));
+        if (!rest.isEmpty()) placeLine(q, bgc, rest, yTop + blockH + 6);
     }
 
     /** Readouts side by side, icons above the numbers, with hairlines between them. */

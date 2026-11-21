@@ -43,7 +43,8 @@ final class Ui {
         } else if (v instanceof android.widget.Button) {
             ((TextView) v).setTextColor(ON_ACCENT);
             v.setBackground(rounded(ACCENT, v.getResources().getDisplayMetrics().density * 12));
-        } else if (v instanceof TextView) ((TextView) v).setTextColor(0xFFD3DAE3);
+        } else if (v instanceof android.widget.EditText) ((TextView) v).setTextColor(0xFFD3DAE3);
+        // plain labels keep the colour they were made with (titles light, subtitles grey)
         if (v instanceof android.view.ViewGroup) {
             android.view.ViewGroup g = (android.view.ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) tint(g.getChildAt(i));

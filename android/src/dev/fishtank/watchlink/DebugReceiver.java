@@ -76,7 +76,7 @@ public class DebugReceiver extends BroadcastReceiver {
                         Log.i(WatchService.TAG, "debug design preview bg" + d.background);
                         return;
                     }
-                    FaceInstaller.install(name, iwf, (t, done) -> Log.i(WatchService.TAG, "debug design: " + t));
+                    FaceInstaller.installMine(name, iwf, (t, done) -> Log.i(WatchService.TAG, "debug design: " + t));
                 } catch (Exception e) { Log.w(WatchService.TAG, "debug design", e); }
             }).start();
         }

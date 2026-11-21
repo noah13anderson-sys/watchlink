@@ -21,6 +21,27 @@ final class FaceInstaller {
         return "wl99.iwf";
     }
 
+    /**
+     * Installs a face made in WatchLink. When the watch has no free slot or not enough room, an older WatchLink face
+     * (the one on show if it is ours, else the first) is removed first, so a new design replaces the last one.
+     */
+    static void installMine(String name, byte[] iwf, Status st) {
+        Handler h = new Handler(Looper.getMainLooper());
+        IdoProtocol.FaceList fl = WatchService.faceList;
+        if (WatchService.instance != null && fl != null && (fl.installed >= fl.slots || iwf.length > fl.free)) {
+            String old = fl.current != null && fl.current.startsWith("wl") ? fl.current : null;
+            for (String f : fl.names) if (old == null && f.startsWith("wl")) old = f;
+            if (old != null) {
+                String gone = old;
+                h.post(() -> st.show("Replacing your face " + gone.replace(".iwf", "") + "…", false));
+                WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceDelete(gone));
+                h.postDelayed(() -> new Thread(() -> send(name, iwf, st)).start(), 2500);   // a slot was just freed
+                return;
+            }
+        }
+        install(name, iwf, st);
+    }
+
     /** Checks room on the watch and sends the face. Call on any thread; status arrives on the main thread. */
     static void install(String name, byte[] iwf, Status st) {
         Handler h = new Handler(Looper.getMainLooper());
@@ -36,6 +57,11 @@ final class FaceInstaller {
                     + fl.free / 1024 + " KB free). Remove a face in Watch faces first.", true));
             return;
         }
+        send(name, iwf, st);
+    }
+
+    private static void send(String name, byte[] iwf, Status st) {
+        Handler h = new Handler(Looper.getMainLooper());
         byte[] lz = IwfFile.compress(iwf, 4096);
         h.post(() -> {
             st.show("Sending to the watch…", false);

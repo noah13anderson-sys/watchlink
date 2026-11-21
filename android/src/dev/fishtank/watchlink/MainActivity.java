@@ -297,7 +297,10 @@ public class MainActivity extends Activity {
         statusText.setText(ok ? "Connected" : s.startsWith("Disconnected") ? "Watch not in range" : s);
         int bat = WatchService.battery;
         batteryText.setText(bat < 0 ? "" : "🔋 " + bat + "%");
-        firmwareText.setText(ok ? "Firmware " + WatchService.firmware : "");
+        long ago = WatchService.lastUpdate == 0 ? -1 : (System.currentTimeMillis() - WatchService.lastUpdate) / 60000;
+        String upd = ago < 0 ? "" : ago == 0 ? "updated just now" : ago < 60 ? "updated " + ago + " min ago"
+                : "updated " + (ago / 60) + " h ago";
+        firmwareText.setText(ok ? "Firmware " + WatchService.firmware + (upd.isEmpty() ? "" : " · " + upd) : upd);
 
         if (WatchService.steps >= 0) {
             stepsVal.setText(String.format("%,d", WatchService.steps));

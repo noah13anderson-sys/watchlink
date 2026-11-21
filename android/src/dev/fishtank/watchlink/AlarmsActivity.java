@@ -14,7 +14,7 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Up to 5 alarms, stored locally and sent to the watch with 03 02 (experimental encoding). */
+/** Up to 5 alarms, stored on the phone and sent to the watch (v3 0x0E) a moment after each change. */
 public class AlarmsActivity extends Activity {
     static final int COUNT = 5;
     static final String[] DAYS = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
@@ -27,7 +27,7 @@ public class AlarmsActivity extends Activity {
         int pad = Ui.dp(this, 16);
         root.setPadding(pad, Ui.dp(this, 28), pad, pad);
         root.addView(Ui.label(this, "Alarms", 28, true, Ui.text(this)));
-        TextView sub = Ui.label(this, "Switched-on alarms are sent to the watch; switched-off ones are removed from it.",
+        TextView sub = Ui.label(this, "Changes go to the watch straight away. Switched-off alarms are removed from it.",
                 14, false, Ui.subtext(this));
         sub.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 16));
         root.addView(sub);
@@ -35,7 +35,7 @@ public class AlarmsActivity extends Activity {
         for (int i = 0; i < COUNT; i++) card(root, i);
 
         LinearLayout send = new LinearLayout(this);
-        Ui.primary(this, send, "Send alarms to watch", v -> {
+        Ui.primary(this, send, "Send to watch again", v -> {
             sendAll(this, p);
             Toast.makeText(this, "Sent", Toast.LENGTH_SHORT).show();
         });
@@ -68,11 +68,12 @@ public class AlarmsActivity extends Activity {
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        TextView time = Ui.label(this, fmt(p.getInt(k + "h", 7), p.getInt(k + "m", 0)), 34, true, Ui.text(this));
+        TextView time = Ui.label(this, show(p.getInt(k + "h", 7), p.getInt(k + "m", 0)), 34, true, Ui.text(this));
         time.setOnClickListener(v -> new TimePickerDialog(this, (tp, hh, mm) -> {
             p.edit().putInt(k + "h", hh).putInt(k + "m", mm).apply();
-            time.setText(fmt(hh, mm));
-        }, p.getInt(k + "h", 7), p.getInt(k + "m", 0), true).show());
+            time.setText(show(hh, mm));
+            changed();
+        }, p.getInt(k + "h", 7), p.getInt(k + "m", 0), android.text.format.DateFormat.is24HourFormat(this)).show());
         top.addView(time, new LinearLayout.LayoutParams(0, -2, 1));
         android.widget.Switch on = new android.widget.Switch(this);
         on.setChecked(p.getBoolean(k + "on", false));
@@ -80,7 +81,7 @@ public class AlarmsActivity extends Activity {
                 new int[][]{{android.R.attr.state_checked}, {}}, new int[]{Ui.ACCENT, Ui.subtext(this)});
         on.setThumbTintList(st);
         on.setTrackTintList(st);
-        on.setOnCheckedChangeListener((v, ch) -> p.edit().putBoolean(k + "on", ch).apply());
+        on.setOnCheckedChangeListener((v, ch) -> { p.edit().putBoolean(k + "on", ch).apply(); changed(); });
         top.addView(on);
         c.addView(top);
         TextView name = Ui.label(this, "Alarm " + (i + 1) + "  ·  tap the time to change it", 13, false, Ui.subtext(this));
@@ -102,6 +103,7 @@ public class AlarmsActivity extends Activity {
             chip.setOnClickListener(v -> {
                 p.edit().putInt(k + "days", p.getInt(k + "days", 0x1f) ^ bit).apply();
                 paint.run();
+                changed();
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
             lp.setMargins(Ui.dp(this, 2), 0, Ui.dp(this, 2), 0);
@@ -111,6 +113,32 @@ public class AlarmsActivity extends Activity {
     }
 
     static String fmt(int h, int m) { return String.format("%02d:%02d", h, m); }
+
+    private String show(int h, int m) { return show(this, h, m); }
+
+    /** The time as the phone shows it (24-hour or 12-hour). */
+    static String show(android.content.Context c, int h, int m) {
+        if (android.text.format.DateFormat.is24HourFormat(c)) return fmt(h, m);
+        return String.format(java.util.Locale.getDefault(), "%d:%02d %s", (h + 11) % 12 + 1, m, h < 12 ? "am" : "pm");
+    }
+
+    private final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable sender = () -> {
+        sendAll(this, p);
+        Toast.makeText(this, WatchService.instance == null ? "Saved. Not connected, so open this again later to send"
+                : "Alarms sent to the watch", Toast.LENGTH_SHORT).show();
+    };
+
+    /** Send a moment after the last change, so several quick taps send once. */
+    private void changed() {
+        h.removeCallbacks(sender);
+        h.postDelayed(sender, 1500);
+    }
+
+    @Override protected void onDestroy() {
+        if (h.hasCallbacks(sender)) { h.removeCallbacks(sender); sendAll(this, p); }
+        super.onDestroy();
+    }
 
     static IdoProtocol.Alarm testAlarm;
 

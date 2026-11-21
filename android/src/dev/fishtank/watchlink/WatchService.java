@@ -267,6 +267,7 @@ public class WatchService extends Service {
                 kcal = IdoProtocol.u32(v, 6);
                 distance = IdoProtocol.u32(v, 10);
                 activeTime = IdoProtocol.u32(v, 14);
+                lastUpdate = System.currentTimeMillis();
                 h.post(MainActivity::refresh);
                 h.post(WatchService.this::recordActivity);
             } else if (cmd == 0x07 && key == 0x01 && v.length >= 3) {
@@ -524,6 +525,8 @@ public class WatchService extends Service {
     }
 
     static volatile long steps = -1, kcal, distance, activeTime;
+    /** When the watch last sent its stats (ms), 0 = not yet. */
+    static volatile long lastUpdate;
 
     // ---- Keep steps and battery in HealthDb ----
     private long lastStepsSaved = -1, lastBatteryAt;
@@ -545,9 +548,29 @@ public class WatchService extends Service {
         });
     }
 
+    /** Low watch battery: one phone notification per discharge (at 20% or less; reset once it's above 30%). */
+    private void checkBattery(int b) {
+        android.content.SharedPreferences p = getSharedPreferences(PREFS, 0);
+        if (!p.getBoolean("lowBatteryAlert", true)) return;
+        boolean told = p.getBoolean("lowBatteryTold", false);
+        if (b > 30 && told) p.edit().putBoolean("lowBatteryTold", false).apply();
+        if (b > 20 || b <= 0 || told) return;
+        p.edit().putBoolean("lowBatteryTold", true).apply();
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        nm.createNotificationChannel(new NotificationChannel("battery", "Watch battery", NotificationManager.IMPORTANCE_DEFAULT));
+        android.app.PendingIntent open = android.app.PendingIntent.getActivity(this, 0,
+                new Intent(this, MainActivity.class), android.app.PendingIntent.FLAG_IMMUTABLE);
+        nm.notify(3, new Notification.Builder(this, "battery")
+                .setSmallIcon(android.R.drawable.ic_lock_idle_low_battery)
+                .setContentTitle("Watch battery low: " + b + "%")
+                .setContentText("Charge your Momax watch soon")
+                .setContentIntent(open).setAutoCancel(true).build());
+    }
+
     /** Watch battery when it changes, or every half hour. */
     private void recordBattery() {
         final int b = battery;
+        if (b >= 0) checkBattery(b);
         long now = System.currentTimeMillis();
         if (b < 0 || (b == lastBatterySaved && now - lastBatteryAt < 30 * 60_000L)) return;
         lastBatterySaved = b;
