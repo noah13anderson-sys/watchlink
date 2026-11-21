@@ -33,6 +33,7 @@
         <activity android:name=".AppsActivity" android:exported="false" />
         <activity android:name=".FacesActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".FaceDesignerActivity" android:exported="false" />
 
         <service android:name=".WatchService"
             android:exported="false"

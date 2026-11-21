@@ -494,12 +494,51 @@ public final class IdoProtocol {
     // ---- Watch faces (v3) ----
     public static final int V3_FACE_LIST = 0x06, V3_FACE_SET = 0x08;
 
-    /** Make an installed face current: name (e.g. "w331.iwf") zero-padded to 31 bytes. Reply 00 = ok. */
-    public static byte[] faceSet(String name) {
+    /** v3 0x08 (protocol_v3_set_watch_face): u8 operate + name[30]. Operate 1 = show this face (verified:
+     *  reply 00 01 + name). */
+    public static byte[] faceSet(String name) { return faceOp(1, name); }
+
+    public static byte[] faceOp(int operate, String name) {
         byte[] out = new byte[31];
+        out[0] = (byte) operate;
         byte[] n = name.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        System.arraycopy(n, 0, out, 0, Math.min(n.length, 30));
+        System.arraycopy(n, 0, out, 1, Math.min(n.length, 29));
         return out;
+    }
+
+    /** v3 0x31 face list (protocol_v3_watch_file_list_new_head + 40-byte items), verified on the SW2S:
+     *  u8 local, cloud slots, wallpaper, installed, user wallpaper; name[30] current face; u8 frame version;
+     *  u16 max size; u32 capacity, used, free bytes; 12 bytes; u8 count; items {type, version, sort, u32 size,
+     *  3 bytes, name[30]}. */
+    public static final int V3_FACE_LIST_NEW = 0x31;
+
+    public static final class FaceList {
+        public String current = "";
+        public int slots, installed;
+        public long capacity, used, free;
+        public final List<String> names = new ArrayList<>();
+        public final List<Integer> sizes = new ArrayList<>();
+    }
+
+    public static FaceList parseFaceListNew(byte[] p) {
+        if (p.length < 63) return null;
+        FaceList f = new FaceList();
+        f.slots = p[1] & 0xff;
+        f.installed = p[3] & 0xff;
+        f.current = cstr(p, 5, 30);
+        f.capacity = u32(p, 38); f.used = u32(p, 42); f.free = u32(p, 46);
+        int n = p[62] & 0xff, o = 63;
+        for (int i = 0; i < n && o + 40 <= p.length; i++, o += 40) {
+            f.sizes.add((int) u32(p, o + 3));
+            f.names.add(cstr(p, o + 10, 30));
+        }
+        return f;
+    }
+
+    static String cstr(byte[] p, int o, int max) {
+        int e = o;
+        while (e < o + max && e < p.length && p[e] != 0) e++;
+        return new String(p, o, e - o, java.nio.charset.StandardCharsets.US_ASCII);
     }
 
     /** Face list reply: a short header, then entries of 01, u32 length, ASCII name. */

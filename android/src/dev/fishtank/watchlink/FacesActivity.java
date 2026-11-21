@@ -28,7 +28,7 @@ public class FacesActivity extends Activity {
         FacesActivity a = current;
         if (a == null) return;
         a.runOnUiThread(() -> {
-            if (ok && a.pending != null) a.p.edit().putString("face", a.pending).apply();
+            if (ok && a.pending != null) WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]);
             Toast.makeText(a, ok ? "Watch face changed" : "The watch refused that face", Toast.LENGTH_SHORT).show();
             a.pending = null;
             a.fill();
@@ -50,6 +50,9 @@ public class FacesActivity extends Activity {
         sub.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 16));
         root.addView(sub);
         list = Ui.card(this, root);
+        LinearLayout newRow = new LinearLayout(this);
+        Ui.primary(this, newRow, "Design a new face", v -> startActivity(new android.content.Intent(this, FaceDesignerActivity.class)));
+        root.addView(newRow, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Ui.bg(this));
@@ -69,7 +72,7 @@ public class FacesActivity extends Activity {
     private void ask(int tries) {
         if (current != this || tries > 6) return;
         if (tries > 0 && answered) return;
-        WatchService.sendV3(IdoProtocol.V3_FACE_LIST, new byte[0]);
+        WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]);
         list.postDelayed(() -> ask(tries + 1), 4000);
     }
 
@@ -80,17 +83,22 @@ public class FacesActivity extends Activity {
 
     private void fill() {
         list.removeAllViews();
-        List<String> faces = WatchService.faces;
-        if (faces == null || faces.isEmpty()) {
-            list.addView(Ui.label(this, faces == null ? "Asking the watch…" : "No faces found.", 16, false, Ui.subtext(this)));
+        IdoProtocol.FaceList fl = WatchService.faceList;
+        if (fl == null || fl.names.isEmpty()) {
+            list.addView(Ui.label(this, fl == null ? "Asking the watch…" : "No faces found.", 16, false, Ui.subtext(this)));
             return;
         }
-        String cur = p.getString("face", null);
-        for (int i = 0; i < faces.size(); i++) {
-            String f = faces.get(i);
-            if (i > 0) Ui.divider(this, list);
-            String title = "Face " + (i + 1) + (f.equals(cur) ? "   ✓" : "");
-            String sub = f.equals(pending) ? "Sending…" : f.replace(".iwf", "");
+        TextView info = Ui.label(this, fl.installed + " of " + fl.slots + " slots used · " + fl.free / 1024 + " KB free",
+                13, false, Ui.subtext(this));
+        info.setPadding(Ui.dp(this, 4), 0, 0, Ui.dp(this, 6));
+        list.addView(info);
+        for (int i = 0; i < fl.names.size(); i++) {
+            String f = fl.names.get(i);
+            Ui.divider(this, list);
+            boolean mine = f.startsWith("wl");
+            String title = (mine ? "Your face " + f.replace(".iwf", "").substring(2) : "Face " + f.replace(".iwf", ""))
+                    + (f.equals(fl.current) ? "   ✓" : "");
+            String sub = f.equals(pending) ? "Sending…" : (fl.sizes.get(i) / 1024) + " KB" + (mine ? " · made in WatchLink" : "");
             Ui.row(this, list, title, sub, v -> {
                 pending = f;
                 WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceSet(f));

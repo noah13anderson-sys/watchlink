@@ -23,6 +23,16 @@ public class DebugReceiver extends BroadcastReceiver {
             WatchService.send(Collections.singletonList(p));
             Log.i(WatchService.TAG, "debug raw " + IdoProtocol.hex(p));
         }
+        if (i.hasExtra("sendfile")) {           // --es sendfile /sdcard/x.iwf.lz --es name x.iwf.lz --ei comp 1 --ei orig N
+            try {
+                byte[] d = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(i.getStringExtra("sendfile")));
+                FileTransfer.start(i.getIntExtra("type", FileTransfer.TYPE_IWF), i.getStringExtra("name"), d,
+                        i.getIntExtra("comp", 0), i.getIntExtra("orig", d.length), new FileTransfer.Listener() {
+                            public void onProgress(int pc) { Log.i(WatchService.TAG, "debug transfer " + pc + "%"); }
+                            public void onDone(boolean ok, String m) { Log.i(WatchService.TAG, "debug transfer done ok=" + ok + " " + m); }
+                        });
+            } catch (Exception e) { Log.w(WatchService.TAG, "sendfile", e); }
+        }
         if (i.hasExtra("v3cmd")) {
             byte[] payload = IdoProtocol.unhex(i.getStringExtra("v3") == null ? "" : i.getStringExtra("v3"));
             WatchService.sendV3(i.getIntExtra("v3cmd", 0), payload);

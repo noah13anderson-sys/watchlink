@@ -256,6 +256,7 @@ public class WatchService extends Service {
             if (v.length < 2) return;
             int cmd = v[0] & 0xff, key = v[1] & 0xff;
             if (cmd == 0x33) { h.post(() -> onV3Packet(v)); return; }
+            if (cmd == 0xD1) { FileTransfer.onReply(v); return; }
             if (cmd == 0x02 && key == 0x01 && v.length >= 8) {
                 firmware = (v[4] & 0xff) + "." + String.format("%02d", v[5] & 0xff);
                 battery = v[7] & 0xff;
@@ -346,12 +347,17 @@ public class WatchService extends Service {
             else if (cmd == IdoProtocol.V3_FACE_LIST) {
                 faces = IdoProtocol.parseFaceList(payload);
                 FacesActivity.refresh();
+            } else if (cmd == IdoProtocol.V3_FACE_LIST_NEW) {
+                IdoProtocol.FaceList fl = IdoProtocol.parseFaceListNew(payload);
+                if (fl != null) { faceList = fl; faces = fl.names; FacesActivity.refresh(); }
             } else if (cmd == IdoProtocol.V3_FACE_SET) FacesActivity.onSetResult(payload.length > 0 && payload[0] == 0);
         }
     }
 
     /** Faces installed on the watch (null until the watch has answered). */
     static volatile List<String> faces;
+    /** Faces with sizes and free space (v3 0x31), null until the watch has answered. */
+    static volatile IdoProtocol.FaceList faceList;
 
     // ---- Health sync: heart rate, stress, SpO2, sleep (one type at a time) ----
     /** Latest value, its time (seconds after midnight, -1 = none), and today's min/max. */
