@@ -454,7 +454,7 @@ public final class IdoProtocol {
      * numbering: 1 SMS, 2 email, 3 QQ, 4 WeChat, 5 Weibo, 6 Facebook, 7 Twitter, 8 WhatsApp, 9 Messenger,
      * 10 Instagram, 11 LinkedIn, 12 calendar, 13 Skype, 15 other, 16 VK, 17 Line, 18 Viber, 19 KakaoTalk,
      * 20 Gmail, 21 Outlook, 22 Snapchat, 23 Telegram, 24 Chatwork, 25 Slack, 26 Yahoo Mail, 27 Tumblr,
-     * 28 YouTube, 29 Pinterest, 32 TikTok. Icons beyond SMS not yet checked by eye on the SW2S.
+     * 28 YouTube, 29 Pinterest, 32 TikTok. WhatsApp (8) verified on the SW2S; the rest follow the same numbering.
      */
     public static int appType(String pkg) {
         if (pkg == null) return 1;

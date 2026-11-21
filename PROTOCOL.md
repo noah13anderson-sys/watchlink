@@ -42,7 +42,7 @@ The watch also has a classic Bluetooth side ("Momax SW2S BT", same address) for 
 | `03 20`, `03 60`, `03 55`, `03 03`, `03 10`, `03 11` | sedentary / drink water / hand washing reminders, step goal, profile, units: acked, effect *unverified* (no read command) |
 | `07 40 …` (watch→phone) | "data changed" (e.g. `07 40 00 00 10` after a DND change, `04` after brightness) |
 
-Notification icon types (v3 `0x0B` type field) follow the function-table bit order: 1 SMS, 2 email, 3 QQ, 4 WeChat, 5 Weibo, 6 Facebook, 7 Twitter, 8 WhatsApp, 9 Messenger, 10 Instagram, 11 LinkedIn, 12 calendar, 13 Skype, 16 VK, 17 Line, 18 Viber, 19 KakaoTalk, 20 Gmail, 21 Outlook, 22 Snapchat, 23 Telegram, 25 Slack, 28 YouTube, 32 TikTok. The SW2S accepts type 8.
+Notification icon types (v3 `0x0B` type field) follow the function-table bit order: 1 SMS, 2 email, 3 QQ, 4 WeChat, 5 Weibo, 6 Facebook, 7 Twitter, 8 WhatsApp, 9 Messenger, 10 Instagram, 11 LinkedIn, 12 calendar, 13 Skype, 16 VK, 17 Line, 18 Viber, 19 KakaoTalk, 20 Gmail, 21 Outlook, 22 Snapchat, 23 Telegram, 25 Slack, 28 YouTube, 32 TikTok. Type 8 (WhatsApp) verified on the SW2S 2026-11-21: shows the WhatsApp icon.
 
 The complete command catalog extracted from the Momax library is in PROTOCOL_FULL.md.
 
