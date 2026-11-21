@@ -261,12 +261,14 @@ public class WatchService extends Service {
                 firmware = (v[4] & 0xff) + "." + String.format("%02d", v[5] & 0xff);
                 battery = v[7] & 0xff;
                 h.post(MainActivity::refresh);
+                h.post(WatchService.this::recordBattery);
             } else if (cmd == 0x02 && key == 0xA0 && v.length >= 19) {
                 steps = IdoProtocol.u32(v, 2);
                 kcal = IdoProtocol.u32(v, 6);
                 distance = IdoProtocol.u32(v, 10);
                 activeTime = IdoProtocol.u32(v, 14);
                 h.post(MainActivity::refresh);
+                h.post(WatchService.this::recordActivity);
             } else if (cmd == 0x07 && key == 0x01 && v.length >= 3) {
                 h.post(() -> MediaControl.handle(WatchService.this, v[2] & 0xff));
             } else if (cmd == 0x07 && key == 0x02) {
@@ -343,7 +345,7 @@ public class WatchService extends Service {
             byte[] payload = java.util.Arrays.copyOfRange(f, 11, Math.min(len, f.length));
             Log.i(TAG, "v3 frame cmd=0x" + Integer.toHexString(cmd) + " crc=" + (crcOk ? "ok" : "BAD")
                     + " payload=" + IdoProtocol.hex(payload));
-            if (cmd == IdoProtocol.V3_HEALTH) onHeartPage(payload);
+            if (cmd == IdoProtocol.V3_HEALTH) onHealthPage(payload);
             else if (cmd == IdoProtocol.V3_FACE_LIST) {
                 faces = IdoProtocol.parseFaceList(payload);
                 FacesActivity.refresh();
@@ -361,6 +363,8 @@ public class WatchService extends Service {
     static volatile IdoProtocol.FaceList faceList;
 
     // ---- Health sync: heart rate, stress, SpO2, sleep (one type at a time) ----
+    // For each type the watch is first asked for earlier days it still holds (oldest first). Each finished day is
+    // saved to HealthDb and only then confirmed (operate 1) so the watch moves on to the next day. Then today.
     /** Latest value, its time (seconds after midnight, -1 = none), and today's min/max. */
     static final class Series { volatile int value, time = -1, min, max; }
     static final Series hr = new Series(), stress = new Series(), spo2 = new Series();
@@ -370,26 +374,50 @@ public class WatchService extends Service {
 
     private static final int[] HEALTH_TYPES = {IdoProtocol.HEALTH_TYPE_HR, IdoProtocol.HEALTH_TYPE_STRESS,
             IdoProtocol.HEALTH_TYPE_SPO2, IdoProtocol.HEALTH_TYPE_SLEEP};
-    private int healthIdx = -1, healthOffset = -1, healthRun;
+    private int healthIdx = -1, healthOffset, healthReq, healthDays;
+    /** false while catching up on earlier days. */
+    private boolean healthToday, historyThisRun;
+    private String lastHistoryDay;
+    private long lastHistorySync;
     private final List<int[]> healthSamples = new java.util.ArrayList<>();
 
-    /** Download today's health data, one type after another. */
+    /** Download health data, one type after another (earlier days at most every 30 minutes, then today). */
     void requestHealth() {
         healthIdx = 0;
-        healthRun++;
+        historyThisRun = System.currentTimeMillis() - lastHistorySync > 30 * 60_000L;
+        if (historyThisRun) lastHistorySync = System.currentTimeMillis();
         startHealthType();
     }
 
     void requestHeartRate() { requestHealth(); }
 
     private void startHealthType() {
-        if (healthIdx < 0 || healthIdx >= HEALTH_TYPES.length) { healthIdx = -1; MainActivity.refresh(); return; }
-        healthOffset = 0;
-        healthSamples.clear();
-        sendV3(IdoProtocol.V3_HEALTH, IdoProtocol.healthRequest(HEALTH_TYPES[healthIdx], 0));
+        if (healthIdx < 0 || healthIdx >= HEALTH_TYPES.length) {
+            healthIdx = -1;
+            healthReq++;
+            MainActivity.refresh();
+            HistoryActivity.refresh();
+            return;
+        }
+        healthToday = !historyThisRun;
+        healthDays = 0;
+        lastHistoryDay = null;
+        requestPage(0);
+    }
+
+    private void requestPage(int offset) {
+        healthOffset = offset;
+        if (offset == 0) healthSamples.clear();
+        sendV3(IdoProtocol.V3_HEALTH, IdoProtocol.healthRequest(0, HEALTH_TYPES[healthIdx], healthToday, offset));
+        final int req = ++healthReq;
         // move on if the watch never answers
-        final int idx = healthIdx, run = healthRun;
-        h.postDelayed(() -> { if (healthRun == run && healthIdx == idx) { healthIdx++; startHealthType(); } }, 8000);
+        h.postDelayed(() -> { if (healthReq == req && healthIdx >= 0) nextHealthStep(); }, 8000);
+    }
+
+    /** After earlier days: today; after today: the next type. */
+    private void nextHealthStep() {
+        if (!healthToday) { healthToday = true; requestPage(0); }
+        else { healthIdx++; startHealthType(); }
     }
 
     private String lastRaw = "";
@@ -407,52 +435,134 @@ public class WatchService extends Service {
         } catch (Exception e) { Log.w(TAG, "saveRaw", e); }
     }
 
-    private void onHeartPage(byte[] payload) {
-        if (healthIdx < 0 || payload.length < 5) return;
+    private void onHealthPage(byte[] payload) {
+        if (healthIdx < 0 || payload.length < 5 || payload[0] != 0) return;   // operate 1 = reply to a confirm
         int type = HEALTH_TYPES[healthIdx];
-        if ((payload[1] & 0xff) != type) return;
+        if ((payload[1] & 0xff) != type || (payload[2] != 0) != healthToday) return;
         int echoedOffset = (payload[3] & 0xff) | (payload[4] & 0xff) << 8;
         if (echoedOffset != healthOffset) return;      // stale/duplicate reply
+        healthReq++;                                   // answered: cancels the timeout
 
         if (type == IdoProtocol.HEALTH_TYPE_SLEEP) {
-            saveRaw("sleep", payload);
-            sleepMins = IdoProtocol.parseSleepTotal(payload);
-            Log.i(TAG, "sleep " + sleepMins + " min");
-            healthIdx++; startHealthType();
+            saveRaw(healthToday ? "sleep" : "sleep-earlier", payload);
+            int[] sl = IdoProtocol.parseSleepDay(payload);
+            String day = sl == null ? null : HealthDb.day(sl[0], sl[1], sl[2]);
+            if (sl != null) {
+                String hex = IdoProtocol.hex(payload);
+                HealthDb.run(() -> {
+                    HealthDb db = HealthDb.get(this);
+                    db.saveRaw(day, HealthDb.SLEEP, hex);
+                    android.content.ContentValues cv = new android.content.ContentValues();
+                    cv.put("sleep", sl[3]);
+                    db.setDay(day, cv);
+                });
+                if (healthToday) sleepMins = sl[3];
+            } else if (healthToday) sleepMins = -1;
+            Log.i(TAG, "sleep " + (sl == null ? "none" : sl[3] + " min on " + day));
+            if (healthToday) nextHealthStep(); else finishEarlierDay(type, day);
             return;
         }
         IdoProtocol.HeartPage p = IdoProtocol.parseSeries(payload, type);
-        if (p == null) return;
+        if (p == null) { nextHealthStep(); return; }
         healthSamples.addAll(p.samples);
         // "items" = items remaining from this offset; a page holds dataLen/2 of them.
         // Past the end the watch starts over from 0, so only continue while items remain.
         if (p.items > p.pageItems && p.pageItems > 0 && healthOffset < 5000) {
-            healthOffset += p.pageItems;
-            sendV3(IdoProtocol.V3_HEALTH, IdoProtocol.healthRequest(type, healthOffset));
+            requestPage(healthOffset + p.pageItems);
             return;
         }
+        String day = p.year > 2000 ? HealthDb.day(p.year, p.month, p.day) : null;
+        List<int[]> samples = new java.util.ArrayList<>(healthSamples);
+        if (!healthToday) {
+            Log.i(TAG, "health type " + type + " earlier day " + day + ": " + samples.size() + " samples");
+            finishEarlierDay(type, day, samples);
+            return;
+        }
+        if (day != null && !samples.isEmpty()) HealthDb.run(() -> HealthDb.get(this).addSamples(type, day, samples));
         Series s = type == IdoProtocol.HEALTH_TYPE_HR ? hr : type == IdoProtocol.HEALTH_TYPE_STRESS ? stress : spo2;
-        if (!healthSamples.isEmpty()) {
-            int[] last = healthSamples.get(healthSamples.size() - 1);
+        if (!samples.isEmpty()) {
+            int[] last = samples.get(samples.size() - 1);
             int mn = 999, mx = 0;
-            for (int[] x : healthSamples) { mn = Math.min(mn, x[1]); mx = Math.max(mx, x[1]); }
+            for (int[] x : samples) { mn = Math.min(mn, x[1]); mx = Math.max(mx, x[1]); }
             s.value = last[1]; s.time = last[0]; s.min = mn; s.max = mx;
             if (s == hr) { heartRate = s.value; hrTime = s.time; hrMin = mn; hrMax = mx; }
             Log.i(TAG, "health type " + type + ": " + s.value + " at " + s.time / 3600 + ":" + (s.time / 60) % 60
-                    + " (" + healthSamples.size() + " samples, " + mn + "-" + mx + ")");
+                    + " (" + samples.size() + " samples, " + mn + "-" + mx + ")");
         }
-        healthIdx++;
-        startHealthType();
+        nextHealthStep();
+    }
+
+    private void finishEarlierDay(int type, String day) { finishEarlierDay(type, day, java.util.Collections.emptyList()); }
+
+    /**
+     * An earlier day has arrived: save it, and once it is safely in the database confirm it so the watch moves on to
+     * the next day. Stops when the watch has nothing more, repeats a day, or after 30 days.
+     */
+    private void finishEarlierDay(int type, String day, List<int[]> samples) {
+        if (day == null || day.equals(lastHistoryDay) || day.compareTo(HealthDb.today()) >= 0 || ++healthDays > 30) {
+            healthToday = true;
+            requestPage(0);
+            return;
+        }
+        lastHistoryDay = day;
+        final int idx = healthIdx;
+        final int req = ++healthReq;   // holds the sync until the save is done
+        HealthDb.run(() -> {
+            try {
+                if (!samples.isEmpty()) HealthDb.get(this).addSamples(type, day, samples);
+            } catch (Exception e) {
+                Log.w(TAG, "could not save " + day, e);
+                h.post(() -> { if (healthReq == req && healthIdx == idx) { healthToday = true; requestPage(0); } });
+                return;
+            }
+            h.post(() -> {
+                if (healthReq != req || healthIdx != idx) return;
+                sendV3(IdoProtocol.V3_HEALTH, IdoProtocol.healthRequest(1, type, false, 0));
+                h.postDelayed(() -> { if (healthReq == req && healthIdx == idx) requestPage(0); }, 700);
+            });
+        });
     }
 
     static volatile long steps = -1, kcal, distance, activeTime;
+
+    // ---- Keep steps and battery in HealthDb ----
+    private long lastStepsSaved = -1, lastBatteryAt;
+    private int lastBatterySaved = -1;
+
+    /** Today's totals, and the running step count whenever it changes (for steps per hour). */
+    private void recordActivity() {
+        final long st = steps, kc = kcal, m = distance, act = activeTime;
+        if (st < 0) return;
+        final String day = HealthDb.today();
+        final boolean changed = st != lastStepsSaved;
+        lastStepsSaved = st;
+        HealthDb.run(() -> {
+            HealthDb db = HealthDb.get(this);
+            android.content.ContentValues cv = new android.content.ContentValues();
+            cv.put("steps", st); cv.put("kcal", kc); cv.put("meters", m); cv.put("active", act);
+            db.setDay(day, cv);
+            if (changed) db.addSample(HealthDb.STEPS, System.currentTimeMillis() / 1000 / 60 * 60, (int) st);
+        });
+    }
+
+    /** Watch battery when it changes, or every half hour. */
+    private void recordBattery() {
+        final int b = battery;
+        long now = System.currentTimeMillis();
+        if (b < 0 || (b == lastBatterySaved && now - lastBatteryAt < 30 * 60_000L)) return;
+        lastBatterySaved = b;
+        lastBatteryAt = now;
+        HealthDb.run(() -> HealthDb.get(this).addSample(HealthDb.BATTERY, now / 1000 / 60 * 60, b));
+    }
 
     /** Poll live steps every minute and heart rate every 5 minutes while connected. */
     private int pollCount;
     private final Runnable livePoll = new Runnable() {
         @Override public void run() {
             if (ready) {
-                queue.add(IdoProtocol.getLiveData()); pump();
+                queue.add(IdoProtocol.getLiveData());
+                if (pollCount % 15 == 7) queue.add(IdoProtocol.getDeviceInfo());   // battery for the history
+                pump();
                 if (pollCount % 30 == 29) Weather.update(WatchService.this);
                 if (pollCount++ % 5 == 0) requestHealth();
             }

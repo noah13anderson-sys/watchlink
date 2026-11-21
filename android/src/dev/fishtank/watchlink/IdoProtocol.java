@@ -256,8 +256,16 @@ public final class IdoProtocol {
 
     public static byte[] heartRateRequest(int offset) { return healthRequest(HEALTH_TYPE_HR, offset); }
 
-    public static byte[] healthRequest(int type, int offset) {
-        return new byte[]{0, (byte) type, 1, (byte) offset, (byte) (offset >> 8)};
+    public static byte[] healthRequest(int type, int offset) { return healthRequest(0, type, true, offset); }
+
+    /**
+     * v3 0x04 request head (protocol_v3_health_head): operate (0 = send data, 1 = done), type, is_today, u16 offset.
+     * is_today 0 asks for the oldest earlier day the watch still holds (checked 2026-11-22: HR, stress and SpO2 for
+     * 2026-11-20 came back that way). The reply head (protocol_v3_health_head_reply) echoes operate, type, is_today
+     * and offset, then u16 item count, u16 head size, u32 data size, u8 have_next_data.
+     */
+    public static byte[] healthRequest(int op, int type, boolean today, int offset) {
+        return new byte[]{(byte) op, (byte) type, (byte) (today ? 1 : 0), (byte) offset, (byte) (offset >> 8)};
     }
 
     /**
@@ -275,6 +283,9 @@ public final class IdoProtocol {
         hp.pageItems = dataLen / 2;
         int dataStart = p.length - dataLen, head = dataStart - headLen;
         if (dataLen == 0 || head < 11) return hp;
+        hp.year = (p[head] & 0xff) | (p[head + 1] & 0xff) << 8;
+        hp.month = p[head + 2] & 0xff;
+        hp.day = p[head + 3] & 0xff;
         long t = (p[head + 4] & 0xffL) | (p[head + 5] & 0xffL) << 8 | (p[head + 6] & 0xffL) << 16 | (p[head + 7] & 0xffL) << 24;
         int unit = type == HEALTH_TYPE_HR ? 1 : 60;
         t *= unit;
@@ -305,9 +316,21 @@ public final class IdoProtocol {
         return total;
     }
 
-    /** Parsed heart-rate page: samples as {secondsAfterMidnight, bpm}. */
+    /** Parsed heart-rate page: samples as {secondsAfterMidnight, bpm}; the date is 0 when the page had no data. */
     public static final class HeartPage {
-        public int items, pageItems; public List<int[]> samples = new ArrayList<>();
+        public int items, pageItems, year, month, day; public List<int[]> samples = new ArrayList<>();
+    }
+
+    /** Sleep reply: {year, month, day, total minutes}, or null when the watch sent no sleep. */
+    public static int[] parseSleepDay(byte[] p) {
+        int total = parseSleepTotal(p);
+        if (total <= 0) return null;
+        int headLen = (p[7] & 0xff) | (p[8] & 0xff) << 8;
+        int dataLen = (p[9] & 0xff) | (p[10] & 0xff) << 8;
+        int head = p.length - dataLen - headLen;
+        int y = (p[head] & 0xff) | (p[head + 1] & 0xff) << 8;
+        if (y < 2000) return null;
+        return new int[]{y, p[head + 2] & 0xff, p[head + 3] & 0xff, total};
     }
 
     public static HeartPage parseHeartRate(byte[] p) {

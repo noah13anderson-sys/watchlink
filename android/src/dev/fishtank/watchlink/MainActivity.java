@@ -99,6 +99,11 @@ public class MainActivity extends Activity {
         sleepSub = sub(sleepVal);
         root.addView(grid3);
         root.addView(grid4);
+        for (TextView v : new TextView[]{stepsVal, kcalVal, distVal, hrVal, stressVal, spo2Val, sleepVal})
+            ((View) v.getParent()).setOnClickListener(x -> startActivity(new Intent(this, HistoryActivity.class)));
+        LinearLayout hist = Ui.card(this, root);
+        Ui.row(this, hist, "History", "Day-by-day steps, heart rate, stress, blood oxygen and sleep", v ->
+                startActivity(new Intent(this, HistoryActivity.class)));
 
         // ---- Quick actions ----
         Ui.section(this, root, "Watch");
