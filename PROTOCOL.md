@@ -171,6 +171,8 @@ Compression type 1 is accepted at every step but the face is silently dropped.
 Fonts with `"bpp": 4` (and root images whose name contains `_4bit`) use image format `0x66`: the same 16-byte
 head with format `0x66` and alpha format 0, then 4 bits of grey per pixel ((30R + 59G + 11B) / 100, top 4 bits).
 
+**Images must have an even width.** The watch reads the 4-bit alpha plane as if each row starts on a new byte, so odd-width images (packed continuously, as the library does) come out skewed (seen on the SW2S 2026-11-21: digits drawn as diagonal dashes).
+
 Analog hands: a `"widget": "watch", "type": "time"` item names hour/minute/second images (`hour`, `minute`,
 `second`) with the rotation point inside each image (`hourcenterx/y` …) and on the screen (`houranchorx/y` …).
 Widget types seen in the Momax app: `time`, `date`, `week`, `step`, `calorie`, `battery`; `heartrate` is

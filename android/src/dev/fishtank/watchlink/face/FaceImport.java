@@ -122,7 +122,13 @@ public final class FaceImport {
         o.inScaled = false;
         Bitmap b = BitmapFactory.decodeByteArray(d, 0, d.length, o);
         if (b == null) throw new Exception("An image in the package couldn't be read");
-        return b;
+        if ((b.getWidth() & 1) == 0) return b;
+        // the SW2S needs even image widths: add one transparent column on the right
+        Bitmap e = Bitmap.createBitmap(b.getWidth() + 1, b.getHeight(), Bitmap.Config.ARGB_8888);
+        int[] px = new int[b.getWidth() * b.getHeight()];
+        b.getPixels(px, 0, b.getWidth(), 0, 0, b.getWidth(), b.getHeight());
+        e.setPixels(px, 0, b.getWidth(), 0, 0, b.getWidth(), b.getHeight());
+        return e;
     }
 
     private static int[] px(Bitmap b) {

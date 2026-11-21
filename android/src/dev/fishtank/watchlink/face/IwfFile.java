@@ -56,6 +56,9 @@ public final class IwfFile {
      * high nibble. Byte-identical to the library's bitmap_tool_get_font_buff on the sample faces.
      */
     public static byte[] raw565(int[] argb, int w, int h) {
+        // Note: the SW2S reads the alpha plane as if every row started on a new byte, so images with an odd
+        // width come out skewed (seen 2026-11-21). The library packs the plane continuously like we do; callers
+        // keep widths even instead (FaceDesign rounds up, FaceImport pads a column).
         int n = w * h;
         byte[] px = new byte[2 * n];
         byte[] alpha = new byte[(n + 1) / 2];

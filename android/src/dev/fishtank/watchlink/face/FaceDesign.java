@@ -79,6 +79,7 @@ public final class FaceDesign {
     }
 
     private static Bitmap glyph(String s, Paint p, int w, int h) {
+        w += w & 1;   // the SW2S needs even image widths (odd ones come out skewed), see the note in IwfFile.raw565
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Paint.FontMetrics fm = p.getFontMetrics();
         new Canvas(b).drawText(s, w / 2f, h / 2f - (fm.ascent + fm.descent) / 2f, p);
@@ -97,7 +98,8 @@ public final class FaceDesign {
     private static int digitWidth(Paint p) {
         float w = 0;
         for (char ch = '0'; ch <= '9'; ch++) w = Math.max(w, p.measureText(String.valueOf(ch)));
-        return (int) Math.ceil(w) + 2;
+        int d = (int) Math.ceil(w) + 2;
+        return d + (d & 1);
     }
 
     /** A hand pointing up: image w x h, rotating around (w/2, pivot). */
