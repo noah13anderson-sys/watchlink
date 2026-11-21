@@ -40,11 +40,16 @@ public final class FaceDesign {
             {0xFF2E86DE, 0xFF0A1A3F}, {0xFFFFB000, 0xFF8E1B10}, {0xFFB79CED, 0xFF3B2A6B}, {0xFF7BE0AD, 0xFF114B3A},
             {0xFFE6C068, 0xFF5A3D0C}, {0xFF8E9AAF, 0xFF1F2430}, {0xFFFFAFCC, 0xFF6B2D5C}, {0xFF00E0A0, 0xFF3A0CA3}};
 
-    public static final String[] FONTS = {"Bold", "Light", "Thin", "Black", "Serif", "Mono", "Condensed", "Rounded", "Script"};
+    public static final String[] FONTS = {"Bold", "Light", "Thin", "Black", "Serif", "Mono", "Condensed", "Rounded",
+            "Script", "Medium", "Small caps", "Mono serif", "Digital", "Dots"};
+    private static final int FONT_DIGITAL = 12, FONT_DOTS = 13;
+    public static final String[] EFFECTS = {"Plain", "Outline", "Shadow", "Glow"};
     public static final int[] COLORS = {0xFFFFFFFF, 0xFF00D3B8, 0xFFFFD166, 0xFFFF6A00, 0xFFED254E, 0xFF71F79F,
             0xFF8AB4F8, 0xFFC792EA, 0xFFFF8FAB, 0xFF5EEAD4, 0xFFFACC15, 0xFFB0B8C8, 0xFF60A5FA, 0xFF111111};
-    public static final String[] POSITIONS = {"Middle", "Upper", "Lower"};
+    public static final String[] POSITIONS = {"Middle", "Upper", "Lower", "Big", "Stacked"};
+    private static final int POS_BIG = 3, POS_STACKED = 4;
 
+    public int effect;
     public int style, background, font, timeColor = 0xFFFFFFFF, accentColor = 0xFF00D3B8, position, timeSize = 64;
     public boolean date = true, weekday = true, steps = true, battery = true, heart = false, calories = false,
             weather = false, distance = false, seconds = false, ampm = false;
@@ -67,6 +72,9 @@ public final class FaceDesign {
             case 6: return Typeface.create("sans-serif-condensed", Typeface.BOLD);
             case 7: return Typeface.create("casual", Typeface.BOLD);
             case 8: return Typeface.create("cursive", Typeface.BOLD);
+            case 9: return Typeface.create("sans-serif-medium", Typeface.NORMAL);
+            case 10: return Typeface.create("sans-serif-smallcaps", Typeface.BOLD);
+            case 11: return Typeface.create("serif-monospace", Typeface.BOLD);
             default: return Typeface.create("sans-serif", Typeface.BOLD);
         }
     }
@@ -146,6 +154,111 @@ public final class FaceDesign {
         }
     }
 
+    private boolean drawnFont() { return font == FONT_DIGITAL || font == FONT_DOTS; }
+
+    /** Width of one big digit for the time font (drawn fonts have fixed proportions). */
+    private int timeDigitWidth(Paint tp) {
+        int pad = effect == 0 ? 0 : 4;
+        if (drawnFont()) { int w = Math.round(tp.getTextSize() * (font == FONT_DOTS ? 0.62f : 0.56f)) + pad; return w + (w & 1); }
+        int w = digitWidth(tp) + pad;
+        return w + (w & 1);
+    }
+
+    private int colonWidth(Paint tp) {
+        int pad = effect == 0 ? 0 : 4;
+        if (drawnFont()) { int w = Math.round(tp.getTextSize() * 0.26f) + pad; return w + (w & 1); }
+        int w = (int) Math.ceil(tp.measureText(":")) + 4 + pad;
+        return w + (w & 1);
+    }
+
+    /** One character of the time in the chosen font and effect. */
+    private Bitmap timeGlyph(char ch, Paint tp, int w, int h) {
+        Bitmap shape = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(shape);
+        int pad = effect == 0 ? 0 : 2;
+        if (font == FONT_DIGITAL) sevenSegment(c, ch, pad, pad, w - 2 * pad, h - 2 * pad, tp.getColor());
+        else if (font == FONT_DOTS) dotMatrix(c, ch, pad, pad, w - 2 * pad, h - 2 * pad, tp.getColor());
+        else {
+            Paint.FontMetrics fm = tp.getFontMetrics();
+            c.drawText(String.valueOf(ch), w / 2f, h / 2f - (fm.ascent + fm.descent) / 2f, tp);
+        }
+        if (effect == 0) return shape;
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas o = new Canvas(out);
+        Bitmap mask = shape.extractAlpha();
+        Paint mp = new Paint(Paint.ANTI_ALIAS_FLAG);
+        if (effect == 1) {          // outline in the extras colour
+            mp.setColor(accentColor);
+            for (int dx = -2; dx <= 2; dx++) for (int dy = -2; dy <= 2; dy++)
+                if (dx * dx + dy * dy <= 5) o.drawBitmap(mask, dx, dy, mp);
+        } else if (effect == 2) {   // drop shadow
+            mp.setColor(0xB0000000);
+            o.drawBitmap(mask, 2, 2, mp);
+        } else {                    // glow in the extras colour
+            mp.setColor(accentColor);
+            mp.setMaskFilter(new android.graphics.BlurMaskFilter(3, android.graphics.BlurMaskFilter.Blur.NORMAL));
+            o.drawBitmap(mask, 0, 0, mp);
+            o.drawBitmap(mask, 0, 0, mp);
+        }
+        o.drawBitmap(shape, 0, 0, null);
+        return out;
+    }
+
+    /** 7-segment LCD digit, unlit segments faintly visible. */
+    private static void sevenSegment(Canvas c, char ch, float x, float y, float w, float h, int color) {
+        Paint on = new Paint(Paint.ANTI_ALIAS_FLAG), off = new Paint(Paint.ANTI_ALIAS_FLAG);
+        on.setColor(color);
+        off.setColor((color & 0x00FFFFFF) | 0x1C000000);
+        if (ch == ':') {
+            float r = w * 0.18f;
+            c.drawCircle(x + w / 2, y + h * 0.33f, r, on);
+            c.drawCircle(x + w / 2, y + h * 0.67f, r, on);
+            return;
+        }
+        String segs = new String[]{"abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"}[ch - '0'];
+        float t = Math.max(3, w * 0.17f), m = w * 0.06f;
+        float l = x + m, r = x + w - m, top = y + h * 0.08f, mid = y + h / 2, bot = y + h * 0.92f;
+        float[][] rects = {
+                {l + t / 2, top, r - t / 2, top + t},              // a
+                {r - t, top + t / 2, r, mid - t / 4},              // b
+                {r - t, mid + t / 4, r, bot - t / 2},              // c
+                {l + t / 2, bot - t, r - t / 2, bot},              // d
+                {l, mid + t / 4, l + t, bot - t / 2},              // e
+                {l, top + t / 2, l + t, mid - t / 4},              // f
+                {l + t / 2, mid - t / 2, r - t / 2, mid + t / 2}}; // g
+        for (int i = 0; i < 7; i++) {
+            float[] q = rects[i];
+            c.drawRoundRect(new RectF(q[0], q[1], q[2], q[3]), t / 2, t / 2, segs.indexOf('a' + i) >= 0 ? on : off);
+        }
+    }
+
+    /** 5x7 dot-matrix digit. */
+    private static void dotMatrix(Canvas c, char ch, float x, float y, float w, float h, int color) {
+        String[] rows;
+        switch (ch) {
+            case '0': rows = new String[]{"01110", "10001", "10011", "10101", "11001", "10001", "01110"}; break;
+            case '1': rows = new String[]{"00100", "01100", "00100", "00100", "00100", "00100", "01110"}; break;
+            case '2': rows = new String[]{"01110", "10001", "00001", "00010", "00100", "01000", "11111"}; break;
+            case '3': rows = new String[]{"11111", "00010", "00100", "00010", "00001", "10001", "01110"}; break;
+            case '4': rows = new String[]{"00010", "00110", "01010", "10010", "11111", "00010", "00010"}; break;
+            case '5': rows = new String[]{"11111", "10000", "11110", "00001", "00001", "10001", "01110"}; break;
+            case '6': rows = new String[]{"00110", "01000", "10000", "11110", "10001", "10001", "01110"}; break;
+            case '7': rows = new String[]{"11111", "00001", "00010", "00100", "01000", "01000", "01000"}; break;
+            case '8': rows = new String[]{"01110", "10001", "10001", "01110", "10001", "10001", "01110"}; break;
+            case '9': rows = new String[]{"01110", "10001", "10001", "01111", "00001", "00010", "01100"}; break;
+            default:  rows = new String[]{"0", "0", "1", "0", "1", "0", "0"};
+        }
+        int cols = rows[0].length();
+        float cell = Math.min(w / cols, h / 7f);
+        float ox = x + (w - cell * cols) / 2, oy = y + (h - cell * 7) / 2;
+        Paint on = new Paint(Paint.ANTI_ALIAS_FLAG), off = new Paint(Paint.ANTI_ALIAS_FLAG);
+        on.setColor(color);
+        off.setColor((color & 0x00FFFFFF) | 0x18000000);
+        for (int r = 0; r < 7; r++)
+            for (int k = 0; k < cols; k++)
+                c.drawCircle(ox + cell * (k + 0.5f), oy + cell * (r + 0.5f), cell * 0.4f, rows[r].charAt(k) == '1' ? on : off);
+    }
+
     private static int evenCeil(float v) { int i = (int) Math.ceil(v); return i + (i & 1); }
 
     private static Bitmap glyph(String s, Paint p, int w, int h) {
@@ -192,7 +305,7 @@ public final class FaceDesign {
         Bitmap[] days = new Bitmap[7];
         /** g6: seconds digits; apm: AM, PM. */
         Bitmap[] sec = new Bitmap[10], apm = new Bitmap[2];
-        int timeX, sideX, secY, apmY, secH, apmH, secW;
+        int timeX, sideX, secY, apmY, secH, apmH, secW, dw;
         Bitmap hourHand, minHand, secHand;
         int timeH, sw;
         JSONArray items = new JSONArray();
@@ -209,28 +322,42 @@ public final class FaceDesign {
         q.bg = baseBackground();
         Canvas bgc = new Canvas(q.bg);
         Typeface tf = typeface();
-        boolean side = style == 0 && (seconds || ampm);
-        int size = timeSize, timeW, sideW = 0;
+        boolean stacked = style == 0 && position == POS_STACKED, big = style == 0 && position == POS_BIG;
+        boolean side = style == 0 && (seconds || ampm) && !stacked;
+        int size = stacked ? Math.round(timeSize * 1.25f) : big ? 110 : timeSize, timeW, sideW = 0;
+        // Height left for the time once the other rows are placed (the screen is round: keep ~14 px margins)
+        int smallCount = (steps ? 1 : 0) + (heart ? 1 : 0) + (calories ? 1 : 0) + (weather ? 1 : 0) + (distance ? 1 : 0);
+        int pairRows = big ? 0 : smallCount == 0 ? 0 : (position == 1 ? (smallCount + 1) / 2 : 1 + smallCount / 2);
+        int otherRows = pairRows + ((date || weekday) ? 1 : 0) + (battery ? 1 : 0);
+        int room = SIZE - 28 - otherRows * (ROW_H + 4);
+        if (style == 0) {
+            float k = (drawnFont() ? 1.0f : 1.1f);
+            int maxSize = Math.round((stacked ? room / 2f + (drawnFont() ? 0 : room / 16f) : room) / k) - (effect == 0 ? 0 : 4);
+            size = Math.max(32, Math.min(size, maxSize));
+        }
         Paint tp, secP = null, apmP = null;
-        while (true) {   // with seconds / AM-PM beside the time, shrink the time until the row fits
+        while (true) {   // shrink the time until its row fits the screen
             tp = paint(tf, size, timeColor);
-            int dw = digitWidth(tp);
-            timeW = 4 * dw + (int) Math.ceil(tp.measureText(":")) + 4;
+            int dw = timeDigitWidth(tp);
+            timeW = stacked ? 2 * dw : 4 * dw + colonWidth(tp);
             if (side) {
                 secP = paint(tf, Math.round(size * 0.42f), timeColor);
                 apmP = paint(Typeface.create("sans-serif-medium", Typeface.BOLD), Math.max(14, Math.round(size * 0.24f)), accentColor);
-                q.secW = digitWidth(secP);
+                q.secW = timeDigitWidth(secP);
                 sideW = Math.max(seconds ? 2 * q.secW : 0, ampm ? evenCeil(apmP.measureText("PM")) + 4 : 0);
             }
-            if (!side || timeW + 6 + sideW <= SIZE - 24 || size <= 36) break;
+            int limit = big ? SIZE - 40 : SIZE - 24;
+            if (timeW + (side ? 6 + sideW : 0) <= limit || size <= 36) break;
             size -= 2;
         }
-        int dw = digitWidth(tp);
-        q.timeH = (int) Math.ceil(size * 1.1f);
-        int colonW = (int) Math.ceil(tp.measureText(":")) + 4;
-        for (int i = 0; i < 10; i++) q.time[i] = glyph(String.valueOf(i), tp, dw, q.timeH);
-        q.time[10] = glyph(":", tp, colonW, q.timeH);
-        timeW = 4 * dw + colonW + (colonW & 1);
+        int dw = timeDigitWidth(tp);
+        q.timeH = (int) Math.ceil(size * (drawnFont() ? 1.0f : 1.1f)) + (effect == 0 ? 0 : 4);
+        q.timeH += q.timeH & 1;
+        int colonW = colonWidth(tp);
+        for (int i = 0; i < 10; i++) q.time[i] = timeGlyph((char) ('0' + i), tp, dw, q.timeH);
+        q.time[10] = timeGlyph(':', tp, colonW, q.timeH);
+        q.dw = dw;
+        timeW = stacked ? 2 * dw : 4 * dw + colonW;
         q.timeX = (SIZE - timeW - (side ? 6 + sideW : 0)) / 2;
         q.sideX = q.timeX + timeW + 6;
         if (side) {
@@ -238,7 +365,8 @@ public final class FaceDesign {
             float base = q.timeH / 2f - (fm.ascent + fm.descent) / 2f;      // baseline of the big digits
             if (seconds) {
                 q.secH = (int) Math.ceil(secP.getTextSize() * 1.1f);
-                for (int i = 0; i < 10; i++) q.sec[i] = glyph(String.valueOf(i), secP, q.secW, q.secH);
+                q.secW = timeDigitWidth(secP);
+                for (int i = 0; i < 10; i++) q.sec[i] = timeGlyph((char) ('0' + i), secP, q.secW, q.secH);
                 Paint.FontMetrics sf = secP.getFontMetrics();
                 q.secY = Math.round(base - (q.secH / 2f - (sf.ascent + sf.descent) / 2f));   // same baseline
             }
@@ -310,6 +438,12 @@ public final class FaceDesign {
             rows.add("gap");
             if (dateRow) rows.add("date");
             for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
+        } else if (position == POS_BIG) {      // big time: only the date row and battery
+            rows.add("time"); if (dateRow) rows.add("date");
+        } else if (position == POS_STACKED) {  // hours above minutes
+            if (!pairs.isEmpty()) rows.add(pairs.get(0));
+            rows.add("hour"); rows.add("minute"); if (dateRow) rows.add("date");
+            for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
         } else if (position == 1) {
             rows.add("time"); if (dateRow) rows.add("date"); rows.addAll(pairs);
         } else if (position == 2) {
@@ -323,7 +457,8 @@ public final class FaceDesign {
         int gap = GAP, total;
         while (true) {
             total = 0;
-            for (Object r : rows) total += ("time".equals(r) ? q.timeH : "gap".equals(r) ? 64 : ROW_H) + gap;
+            for (Object r : rows) total += ("time".equals(r) || "hour".equals(r) || "minute".equals(r) ? q.timeH
+                    : "gap".equals(r) ? 64 : ROW_H) + gap;
             total -= gap;
             if (total <= SIZE - 36 || gap == 0) break;
             gap--;
@@ -352,6 +487,10 @@ public final class FaceDesign {
                 if (style == 0 && ampm)
                     add(q, item("apm", q.sideX, y + q.apmY, q.apm[0].getWidth(), q.apmH, "apm", 2, null), "PM");
                 y += q.timeH;
+            } else if ("hour".equals(r) || "minute".equals(r)) {
+                add(q, item((String) r, (SIZE - 2 * q.dw) / 2, y, 2 * q.dw, q.timeH, "g1", 10, null),
+                        "hour".equals(r) ? "10" : "08");
+                y += q.timeH - (drawnFont() ? 0 : q.timeH / 8);   // tuck the two lines together a little
             } else if ("date".equals(r)) {
                 int dateW = 5 * q.sw + 4;
                 boolean both = date && weekday;
@@ -435,7 +574,7 @@ public final class FaceDesign {
                     continue;
                 }
                 String fnt = o.getString("font");
-                Bitmap[] set = t.equals("time") ? q.time : fnt.equals("g3") ? q.batt : fnt.equals("g4") ? q.temp
+                Bitmap[] set = t.equals("time") || t.equals("hour") || t.equals("minute") ? q.time : fnt.equals("g3") ? q.batt : fnt.equals("g4") ? q.temp
                         : fnt.equals("g5") ? q.dist : q.small;
                 String text = q.sample.get(i);
                 int w = 0;

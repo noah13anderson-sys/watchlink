@@ -52,6 +52,8 @@ public class DebugReceiver extends BroadcastReceiver {
             d.ampm = i.getBooleanExtra("apm", false);
             d.timeSize = i.getIntExtra("size", 64);
             d.accentColor = i.getIntExtra("accent", d.accentColor);
+            d.effect = i.getIntExtra("fx", 0);
+            d.position = i.getIntExtra("pos", 0);
             d.background = i.getIntExtra("bg", 0);
             d.font = i.getIntExtra("font", 0);
             new Thread(() -> {
@@ -64,7 +66,8 @@ public class DebugReceiver extends BroadcastReceiver {
                     }
                     if (i.getBooleanExtra("previewonly", false)) {
                         new java.io.File(c.getExternalFilesDir(null), "design.png")
-                                .renameTo(new java.io.File(c.getExternalFilesDir(null), "bg" + d.background + ".png"));
+                                .renameTo(new java.io.File(c.getExternalFilesDir(null), i.getStringExtra("out") != null
+                                        ? i.getStringExtra("out") : "bg" + d.background + ".png"));
                         Log.i(WatchService.TAG, "debug design preview bg" + d.background);
                         return;
                     }

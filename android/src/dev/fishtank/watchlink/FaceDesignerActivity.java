@@ -83,6 +83,7 @@ public class FaceDesignerActivity extends Activity {
         painters.add(() -> dimRow.setVisibility(d.background == FaceDesign.PHOTO ? View.VISIBLE : View.GONE));
         Ui.section(this, root, "Time");
         chips(root, FaceDesign.FONTS, () -> d.font, i -> d.font = i);
+        chips(root, FaceDesign.EFFECTS, () -> d.effect, i -> d.effect = i);
         chips(root, new String[]{"Small", "Medium", "Large"}, () -> d.timeSize == 52 ? 0 : d.timeSize == 76 ? 2 : 1,
                 i -> d.timeSize = i == 0 ? 52 : i == 2 ? 76 : 64);
         colors(root, () -> d.timeColor, c -> d.timeColor = c);
@@ -94,6 +95,10 @@ public class FaceDesignerActivity extends Activity {
         apmNote.setPadding(Ui.dp(this, 4), 0, 0, Ui.dp(this, 4));
         tx.addView(apmNote);
         Ui.section(this, root, "Layout (digital)");
+        TextView layNote = Ui.label(this, "Big shows only the date and battery. Stacked puts hours above minutes.",
+                13, false, Ui.subtext(this));
+        layNote.setPadding(Ui.dp(this, 4), 0, 0, Ui.dp(this, 6));
+        root.addView(layNote);
         chips(root, FaceDesign.POSITIONS, () -> d.position, i -> d.position = i);
         Ui.section(this, root, "Extras");
         colors(root, () -> d.accentColor, c -> d.accentColor = c);
@@ -142,6 +147,7 @@ public class FaceDesignerActivity extends Activity {
         d.heart = p.getBoolean("fd.hr", false); d.calories = p.getBoolean("fd.kcal", false);
         d.weather = p.getBoolean("fd.weather", false); d.distance = p.getBoolean("fd.dist", false);
         d.seconds = p.getBoolean("fd.sec", false); d.ampm = p.getBoolean("fd.apm", false);
+        d.effect = p.getInt("fd.fx", 0);
         d.miles = p.getBoolean("unit.miles", false);
         d.style = p.getInt("fd.style", 0);
         if (d.font >= FaceDesign.FONTS.length) d.font = 0;
@@ -157,7 +163,7 @@ public class FaceDesignerActivity extends Activity {
                 .putBoolean("fd.date", d.date).putBoolean("fd.week", d.weekday).putBoolean("fd.steps", d.steps)
                 .putBoolean("fd.batt", d.battery).putBoolean("fd.hr", d.heart).putBoolean("fd.kcal", d.calories)
                 .putBoolean("fd.weather", d.weather).putBoolean("fd.dist", d.distance)
-                .putBoolean("fd.sec", d.seconds).putBoolean("fd.apm", d.ampm)
+                .putBoolean("fd.sec", d.seconds).putBoolean("fd.apm", d.ampm).putInt("fd.fx", d.effect)
                 .putInt("fd.style", d.style).apply();
     }
 
