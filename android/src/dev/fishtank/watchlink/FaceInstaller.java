@@ -34,6 +34,9 @@ final class FaceInstaller {
             if (old != null) {
                 String gone = old;
                 h.post(() -> st.show("Replacing your face " + gone.replace(".iwf", "") + "…", false));
+                if (gone.equals(fl.current))   // don't remove the face on show: show a built-in one meanwhile
+                    for (String f : fl.names)
+                        if (!f.startsWith("wl")) { WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceSet(f)); break; }
                 WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceDelete(gone));
                 h.postDelayed(() -> new Thread(() -> send(name, iwf, st)).start(), 2500);   // a slot was just freed
                 return;
