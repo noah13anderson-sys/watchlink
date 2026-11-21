@@ -13,7 +13,7 @@ plus PC tools and notes on the watch's Bluetooth protocol.
 |---|---|
 | Auto-find and connect to the watch (scans for the IDO `0AF0` service), auto-reconnect, starts on boot | ✅ |
 | Set the watch clock on every connect | ✅ |
-| Phone notifications → watch (app name, sender, text); choose which apps | ✅ |
+| Phone notifications → watch (sender and text, the app's own icon for WhatsApp, Gmail, Telegram…); choose which apps; skips silent ones and follows the phone's Do not disturb | ✅ |
 | Incoming-call alerts (stop when answered/ended) | ✅ |
 | Alarms (up to 10, days of week) | ✅ |
 | Steps, calories, distance (live) | ✅ |
@@ -24,6 +24,10 @@ plus PC tools and notes on the watch's Bluetooth protocol.
 | Weather (current, 48 h, 7 days, city) from Open-Meteo, MET Norway as fallback | ✅ |
 | Find my phone (full volume, Stop button) | ✅ |
 | Watch faces: list the faces installed on the watch and switch between them | ✅ |
+| Face designer: digital (5 layouts) or analog, 14 fonts, 20 backgrounds or a photo, icons for steps, heart rate, calories, weather, distance and battery; installs straight to the watch (replacing your previous design when the watch is full) | ✅ |
+| History: every heart rate, stress and blood oxygen reading, steps, sleep totals and watch battery kept on the phone, with day-by-day charts and CSV export | ✅ |
+| Earlier days: readings the watch took while the phone was away are fetched on the next connect | ✅ |
+| Home screen widget (watch battery, steps, heart rate, blood oxygen) and a low watch battery alert | ✅ |
 | Find my watch | ⏳ vibration command added, needs testing |
 | Music: watch play/pause/next/prev control the phone's player | ✅ play/pause; pair "Calls & music" for full AVRCP control |
 | Battery & firmware | ✅ |
