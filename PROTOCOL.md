@@ -178,4 +178,4 @@ Analog hands: a `"widget": "watch", "type": "time"` item names hour/minute/secon
 Widget types seen in the Momax app: `time`, `date`, `week`, `step`, `calorie`, `battery`; `heartrate` shows a number on the SW2S
 (verified 2026-11-21). From the cloud-face samples: `weather` = temperature with a 13-image font (0–9, `-`,
 `°C`, `°F`) and `"style": 2`; `heartrate` can use an 11th image (`-`, no reading); also `second`, `day` and
-`apm` (2 images). `distance` (0–9 + `.`) is *unverified*. The SW2S screen is round.
+`apm` (2 images). `distance` (0–9 + `.`) shows on the SW2S (verified 2026-11-21). The SW2S screen is round.
