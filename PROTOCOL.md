@@ -88,14 +88,21 @@ id, status, type, hour, minute, repeat, snooze, delay_min, shock_on_off, repeat_
 
 ### Health sync (`0x04`)
 
-Request: `[0 = start][type][1][u16 offset]`.
+Request (`protocol_v3_health_head`): `[operate][type][is_today][u16 offset]`, operate `0` = send data, `1` = done.
 Types: `1` SpO2, `2` stress, `3` heart rate, `4` activity, `7` sleep, `8` sport, `11` one-minute sport, `16` HRV.
 
-Reply payload:
+Reply payload (`protocol_v3_health_head_reply`):
 
 ```
-echo(5), u16 items remaining, u16 head length, u16 data length, …, head, data
+operate, type, is_today, u16 offset, u16 items remaining, u16 head length, u32 data length, u8 have_next_data, head, data
 ```
+
+**Earlier days (verified 2026-11-22).** `is_today = 1` returns today since midnight. `is_today = 0` returns the
+oldest *earlier* day the watch still holds (heart rate, stress and SpO2 for 2026-11-20 came back that way). Asking
+again returns the same day until the app confirms it with operate `1` (same type, `is_today = 0`); the watch answers
+with operate `1` echoed, and the next `is_today = 0` request returns the following day. When nothing is left, the
+reply has 0 items and no data. Confirmed days are no longer offered, so the app must save them first (WatchLink
+stores them in its own database before confirming). Activity (`4`) and HRV (`16`) returned nothing on the SW2S.
 
 * `head` starts with `u16 year, month, day, u32 start time`.
 * `data` items are `(u8 delta, u8 value)`. A value of 0 is filler (e.g. `ff 00` = 255-unit gap).
