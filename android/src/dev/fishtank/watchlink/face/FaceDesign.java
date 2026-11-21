@@ -39,7 +39,7 @@ public final class FaceDesign {
 
     public int style, background, font, timeColor = 0xFFFFFFFF, accentColor = 0xFF00D3B8, position, timeSize = 64;
     public boolean date = true, weekday = true, steps = true, battery = true, heart = false, calories = false,
-            weather = false, distance = false;
+            weather = false, distance = false, seconds = false, ampm = false;
     /** Distance label: "km" or "mi" (follows the watch's unit setting). */
     public boolean miles;
     /** Optional photo background, already cropped to 240x240. */
@@ -80,6 +80,8 @@ public final class FaceDesign {
         }
         return b;
     }
+
+    private static int evenCeil(float v) { int i = (int) Math.ceil(v); return i + (i & 1); }
 
     private static Bitmap glyph(String s, Paint p, int w, int h) {
         w += w & 1;   // the SW2S needs even image widths (odd ones come out skewed), see the note in IwfFile.raw565
@@ -123,6 +125,9 @@ public final class FaceDesign {
         /** g4: 0-9, '-', °C, °F (weather 13, heart rate 11); g5: 0-9, '.' (distance). */
         Bitmap[] temp = new Bitmap[13], dist = new Bitmap[11];
         Bitmap[] days = new Bitmap[7];
+        /** g6: seconds digits; apm: AM, PM. */
+        Bitmap[] sec = new Bitmap[10], apm = new Bitmap[2];
+        int timeX, sideX, secY, apmY, secH, apmH, secW;
         Bitmap hourHand, minHand, secHand;
         int timeH, sw;
         JSONArray items = new JSONArray();
@@ -139,13 +144,48 @@ public final class FaceDesign {
         q.bg = baseBackground();
         Canvas bgc = new Canvas(q.bg);
         Typeface tf = typeface();
-        Paint tp = paint(tf, timeSize, timeColor);
+        boolean side = style == 0 && (seconds || ampm);
+        int size = timeSize, timeW, sideW = 0;
+        Paint tp, secP = null, apmP = null;
+        while (true) {   // with seconds / AM-PM beside the time, shrink the time until the row fits
+            tp = paint(tf, size, timeColor);
+            int dw = digitWidth(tp);
+            timeW = 4 * dw + (int) Math.ceil(tp.measureText(":")) + 4;
+            if (side) {
+                secP = paint(tf, Math.round(size * 0.42f), timeColor);
+                apmP = paint(Typeface.create("sans-serif-medium", Typeface.BOLD), Math.max(14, Math.round(size * 0.24f)), accentColor);
+                q.secW = digitWidth(secP);
+                sideW = Math.max(seconds ? 2 * q.secW : 0, ampm ? evenCeil(apmP.measureText("PM")) + 4 : 0);
+            }
+            if (!side || timeW + 6 + sideW <= SIZE - 24 || size <= 36) break;
+            size -= 2;
+        }
         int dw = digitWidth(tp);
-        q.timeH = (int) Math.ceil(timeSize * 1.1f);
+        q.timeH = (int) Math.ceil(size * 1.1f);
         int colonW = (int) Math.ceil(tp.measureText(":")) + 4;
         for (int i = 0; i < 10; i++) q.time[i] = glyph(String.valueOf(i), tp, dw, q.timeH);
         q.time[10] = glyph(":", tp, colonW, q.timeH);
-        int timeW = 4 * dw + colonW;
+        timeW = 4 * dw + colonW + (colonW & 1);
+        q.timeX = (SIZE - timeW - (side ? 6 + sideW : 0)) / 2;
+        q.sideX = q.timeX + timeW + 6;
+        if (side) {
+            Paint.FontMetrics fm = tp.getFontMetrics();
+            float base = q.timeH / 2f - (fm.ascent + fm.descent) / 2f;      // baseline of the big digits
+            if (seconds) {
+                q.secH = (int) Math.ceil(secP.getTextSize() * 1.1f);
+                for (int i = 0; i < 10; i++) q.sec[i] = glyph(String.valueOf(i), secP, q.secW, q.secH);
+                Paint.FontMetrics sf = secP.getFontMetrics();
+                q.secY = Math.round(base - (q.secH / 2f - (sf.ascent + sf.descent) / 2f));   // same baseline
+            }
+            if (ampm) {
+                q.apmH = (int) Math.ceil(apmP.getTextSize() * 1.2f);
+                int aw = evenCeil(apmP.measureText("PM")) + 4;
+                apmP.setTextAlign(Paint.Align.CENTER);
+                q.apm[0] = glyph("AM", apmP, aw, q.apmH);
+                q.apm[1] = glyph("PM", apmP, aw, q.apmH);
+                q.apmY = Math.max(0, Math.round(base + fm.ascent) - 2);   // top of the digits
+            }
+        }
 
         Paint sp = paint(Typeface.create("sans-serif-medium", Typeface.NORMAL), 20, accentColor);
         q.sw = digitWidth(sp);
@@ -241,7 +281,11 @@ public final class FaceDesign {
                 }
                 y += ROW_H;
             } else if ("time".equals(r)) {
-                add(q, item("time", (SIZE - timeW) / 2, y, timeW, q.timeH, "g1", 11, null), "10:08");
+                add(q, item("time", q.timeX, y, timeW, q.timeH, "g1", 11, null), "10:08");
+                if (style == 0 && seconds)
+                    add(q, item("second", q.sideX, y + q.secY, 2 * q.secW, q.secH, "g6", 10, null), "32");
+                if (style == 0 && ampm)
+                    add(q, item("apm", q.sideX, y + q.apmY, q.apm[0].getWidth(), q.apmH, "apm", 2, null), "PM");
                 y += q.timeH;
             } else if ("date".equals(r)) {
                 int dateW = 5 * q.sw + 4;
@@ -319,6 +363,12 @@ public final class FaceDesign {
                     continue;
                 }
                 if (t.equals("week")) { c.drawBitmap(q.days[4], o.getInt("x"), o.getInt("y"), null); continue; }
+                if (t.equals("apm")) { c.drawBitmap(q.apm[1], o.getInt("x"), o.getInt("y"), null); continue; }
+                if (t.equals("second")) {
+                    c.drawBitmap(q.sec[3], o.getInt("x"), o.getInt("y"), null);
+                    c.drawBitmap(q.sec[2], o.getInt("x") + q.secW, o.getInt("y"), null);
+                    continue;
+                }
                 String fnt = o.getString("font");
                 Bitmap[] set = t.equals("time") ? q.time : fnt.equals("g3") ? q.batt : fnt.equals("g4") ? q.temp
                         : fnt.equals("g5") ? q.dist : q.small;
@@ -363,7 +413,10 @@ public final class FaceDesign {
         iwf.put("battery", false); iwf.put("compress", "LZ4");
         iwf.put("item", q.items); iwf.put("bkground", "files0.png");
         JSONArray fl = new JSONArray();
-        for (String n : new String[]{"g1", "g2", "g3", "g4", "g5", "week"}) {
+        List<String> fontNames = new ArrayList<>(java.util.Arrays.asList("g1", "g2", "g3", "g4", "g5", "week"));
+        if (style == 0 && seconds) fontNames.add("g6");
+        if (style == 0 && ampm) fontNames.add("apm");
+        for (String n : fontNames) {
             JSONObject f = new JSONObject();
             f.put("name", n); f.put("bpp", 16); f.put("format", "png");
             fl.put(f);
@@ -386,6 +439,8 @@ public final class FaceDesign {
         for (int i = 0; i < 11; i++) f.add("g3_" + i, raw(q.batt[i]));
         for (int i = 0; i < 13; i++) f.add("g4_" + i, raw(q.temp[i]));
         for (int i = 0; i < 11; i++) f.add("g5_" + i, raw(q.dist[i]));
+        if (style == 0 && seconds) for (int i = 0; i < 10; i++) f.add("g6_" + i, raw(q.sec[i]));
+        if (style == 0 && ampm) { f.add("apm_en_am", raw(q.apm[0])); f.add("apm_en_pm", raw(q.apm[1])); }
         for (int i = 0; i < 7; i++) f.add("week_en_" + DAYS[i], raw(q.days[i]));
         return f.build();
     }

@@ -67,6 +67,13 @@ public class FaceDesignerActivity extends Activity {
         chips(root, new String[]{"Small", "Medium", "Large"}, () -> d.timeSize == 52 ? 0 : d.timeSize == 76 ? 2 : 1,
                 i -> d.timeSize = i == 0 ? 52 : i == 2 ? 76 : 64);
         colors(root, () -> d.timeColor, c -> d.timeColor = c);
+        LinearLayout tx = Ui.card(this, root);
+        toggle(tx, "Seconds (digital)", () -> d.seconds, v -> d.seconds = v);
+        toggle(tx, "AM/PM (digital)", () -> d.ampm, v -> d.ampm = v);
+        TextView apmNote = Ui.label(this, "AM/PM only shows when the watch uses the 12-hour clock (Watch settings → Units).",
+                13, false, Ui.subtext(this));
+        apmNote.setPadding(Ui.dp(this, 4), 0, 0, Ui.dp(this, 4));
+        tx.addView(apmNote);
         Ui.section(this, root, "Layout (digital)");
         chips(root, FaceDesign.POSITIONS, () -> d.position, i -> d.position = i);
         Ui.section(this, root, "Extras");
@@ -112,6 +119,7 @@ public class FaceDesignerActivity extends Activity {
         d.steps = p.getBoolean("fd.steps", true); d.battery = p.getBoolean("fd.batt", true);
         d.heart = p.getBoolean("fd.hr", false); d.calories = p.getBoolean("fd.kcal", false);
         d.weather = p.getBoolean("fd.weather", false); d.distance = p.getBoolean("fd.dist", false);
+        d.seconds = p.getBoolean("fd.sec", false); d.ampm = p.getBoolean("fd.apm", false);
         d.miles = p.getBoolean("unit.miles", false);
         d.style = p.getInt("fd.style", 0);
         if (d.font >= FaceDesign.FONTS.length) d.font = 0;
@@ -127,6 +135,7 @@ public class FaceDesignerActivity extends Activity {
                 .putBoolean("fd.date", d.date).putBoolean("fd.week", d.weekday).putBoolean("fd.steps", d.steps)
                 .putBoolean("fd.batt", d.battery).putBoolean("fd.hr", d.heart).putBoolean("fd.kcal", d.calories)
                 .putBoolean("fd.weather", d.weather).putBoolean("fd.dist", d.distance)
+                .putBoolean("fd.sec", d.seconds).putBoolean("fd.apm", d.ampm)
                 .putInt("fd.style", d.style).apply();
     }
 

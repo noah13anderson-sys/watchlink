@@ -48,6 +48,9 @@ public class DebugReceiver extends BroadcastReceiver {
             d.weather = i.getBooleanExtra("weather", false);
             d.distance = i.getBooleanExtra("dist", false);
             d.steps = i.getBooleanExtra("steps", true);
+            d.seconds = i.getBooleanExtra("sec", false);
+            d.ampm = i.getBooleanExtra("apm", false);
+            d.timeSize = i.getIntExtra("size", 64);
             d.background = i.getIntExtra("bg", 0);
             d.font = i.getIntExtra("font", 0);
             new Thread(() -> {
