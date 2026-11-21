@@ -38,7 +38,10 @@ public final class FaceDesign {
     public static final String[] POSITIONS = {"Middle", "Upper", "Lower"};
 
     public int style, background, font, timeColor = 0xFFFFFFFF, accentColor = 0xFF00D3B8, position, timeSize = 64;
-    public boolean date = true, weekday = true, steps = true, battery = true, heart = false, calories = false;
+    public boolean date = true, weekday = true, steps = true, battery = true, heart = false, calories = false,
+            weather = false, distance = false;
+    /** Distance label: "km" or "mi" (follows the watch's unit setting). */
+    public boolean miles;
     /** Optional photo background, already cropped to 240x240. */
     public Bitmap photo;
     public int photoDim = 90;
@@ -117,6 +120,8 @@ public final class FaceDesign {
     private final class Parts {
         Bitmap bg;
         Bitmap[] time = new Bitmap[11], small = new Bitmap[11], batt = new Bitmap[11];
+        /** g4: 0-9, '-', °C, °F (weather 13, heart rate 11); g5: 0-9, '.' (distance). */
+        Bitmap[] temp = new Bitmap[13], dist = new Bitmap[11];
         Bitmap[] days = new Bitmap[7];
         Bitmap hourHand, minHand, secHand;
         int timeH, sw;
@@ -144,9 +149,16 @@ public final class FaceDesign {
 
         Paint sp = paint(Typeface.create("sans-serif-medium", Typeface.NORMAL), 20, accentColor);
         q.sw = digitWidth(sp);
-        for (int i = 0; i < 10; i++) { q.small[i] = glyph(String.valueOf(i), sp, q.sw, ROW_H); q.batt[i] = q.small[i]; }
+        for (int i = 0; i < 10; i++) {
+            q.small[i] = glyph(String.valueOf(i), sp, q.sw, ROW_H);
+            q.batt[i] = q.temp[i] = q.dist[i] = q.small[i];
+        }
         q.small[10] = glyph("/", sp, (int) Math.ceil(sp.measureText("/")) + 2, ROW_H);
         q.batt[10] = glyph("%", sp, (int) Math.ceil(sp.measureText("%")) + 2, ROW_H);
+        q.temp[10] = glyph("-", sp, (int) Math.ceil(sp.measureText("-")) + 2, ROW_H);
+        q.temp[11] = glyph("\u00b0C", sp, (int) Math.ceil(sp.measureText("\u00b0C")) + 2, ROW_H);
+        q.temp[12] = glyph("\u00b0F", sp, (int) Math.ceil(sp.measureText("\u00b0F")) + 2, ROW_H);
+        q.dist[10] = glyph(".", sp, (int) Math.ceil(sp.measureText(".")) + 2, ROW_H);
         Paint wp = paint(Typeface.create("sans-serif-medium", Typeface.BOLD), 18, timeColor);
         for (int i = 0; i < 7; i++) q.days[i] = glyph(DAYS[i].substring(0, 3).toUpperCase(), wp, 50, ROW_H);
         Paint lp = paint(Typeface.create("sans-serif", Typeface.NORMAL), 14, (timeColor & 0x00FFFFFF) | 0xB0000000);
@@ -169,63 +181,81 @@ public final class FaceDesign {
             q.secHand = hand(SEC_W, SEC_H, SEC_PIV, accentColor, true);
         }
 
+        // Small readouts, packed two per row: {label, type, font, fontnum, digits, sample}
+        List<Object[]> small = new ArrayList<>();
+        if (steps) small.add(new Object[]{"steps", "step", "g2", 10, 5, "5367"});
+        if (heart) small.add(new Object[]{"\u2665", "heartrate", "g4", 11, 3, "72"});
+        if (calories) small.add(new Object[]{"kcal", "calorie", "g2", 10, 4, "320"});
+        if (weather) small.add(new Object[]{"\u26c5", "weather", "g4", 13, 4, "21C"});
+        if (distance) small.add(new Object[]{miles ? "mi" : "km", "distance", "g5", 11, 4, "4.19"});
+        // The SW2S screen is round: the row nearest the top edge holds one readout, the rest are paired.
+        List<List<Object[]>> pairs = new ArrayList<>();
+        boolean firstSingle = style == 1 || position != 1;
+        for (int i = 0; i < small.size(); ) {
+            int n = (i == 0 && firstSingle) ? 1 : 2;
+            pairs.add(small.subList(i, Math.min(i + n, small.size())));
+            i += n;
+        }
+
         // Rows from top to bottom; the stack is centred on the screen.
-        List<String> rows = new ArrayList<>();
-        boolean dateRow = date || weekday, hcRow = heart || calories;
+        List<Object> rows = new ArrayList<>();
+        boolean dateRow = date || weekday;
         if (style == 1) {
-            if (steps) rows.add("steps");
+            if (!pairs.isEmpty()) rows.add(pairs.get(0));
             rows.add("gap");
             if (dateRow) rows.add("date");
-            if (hcRow) rows.add("hc");
-            if (battery) rows.add("battery");
+            for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
         } else if (position == 1) {
-            rows.add("time"); if (dateRow) rows.add("date"); if (hcRow) rows.add("hc");
-            if (steps) rows.add("steps"); if (battery) rows.add("battery");
+            rows.add("time"); if (dateRow) rows.add("date"); rows.addAll(pairs);
         } else if (position == 2) {
-            if (steps) rows.add("steps"); if (hcRow) rows.add("hc"); if (dateRow) rows.add("date");
-            rows.add("time"); if (battery) rows.add("battery");
+            rows.addAll(pairs); if (dateRow) rows.add("date"); rows.add("time");
         } else {
-            if (steps) rows.add("steps"); rows.add("time"); if (dateRow) rows.add("date");
-            if (hcRow) rows.add("hc"); if (battery) rows.add("battery");
+            if (!pairs.isEmpty()) rows.add(pairs.get(0));
+            rows.add("time"); if (dateRow) rows.add("date");
+            for (int i = 1; i < pairs.size(); i++) rows.add(pairs.get(i));
         }
-        int total = 0;
-        for (String r : rows) total += (r.equals("time") ? q.timeH : r.equals("gap") ? 64 : ROW_H) + GAP;
-        total -= GAP;
-        int y = Math.max(22, (SIZE - total) / 2);
+        if (battery) rows.add("battery");
+        int gap = GAP, total;
+        while (true) {
+            total = 0;
+            for (Object r : rows) total += ("time".equals(r) ? q.timeH : "gap".equals(r) ? 64 : ROW_H) + gap;
+            total -= gap;
+            if (total <= SIZE - 36 || gap == 0) break;
+            gap--;
+        }
+        int y = Math.max(16, (SIZE - total) / 2);
 
-        for (String r : rows) {
-            switch (r) {
-                case "time":
-                    add(q, item("time", (SIZE - timeW) / 2, y, timeW, q.timeH, "g1", 11, null), "10:08");
-                    y += q.timeH;
-                    break;
-                case "date": {
-                    int dateW = 5 * q.sw + 4;
-                    boolean both = date && weekday;
-                    if (date) add(q, item("date", both ? SIZE / 2 - dateW - 4 : (SIZE - dateW) / 2, y, dateW, ROW_H, "g2", 11, 0), "11/21");
-                    if (weekday) add(q, item("week", both ? SIZE / 2 + 8 : (SIZE - 50) / 2, y, 50, ROW_H, "week", 7, 0), "FRI");
-                    y += ROW_H;
-                    break;
+        for (Object r : rows) {
+            if (r instanceof List) {
+                @SuppressWarnings("unchecked") List<Object[]> pr = (List<Object[]>) r;
+                // place the readouts side by side, centred, 14 px apart
+                float[] wdt = new float[pr.size()];
+                float sum = 14 * (pr.size() - 1);
+                for (int i = 0; i < pr.size(); i++) { wdt[i] = widthOf(q, lp, pr.get(i)); sum += wdt[i]; }
+                float x = (SIZE - sum) / 2f;
+                for (int i = 0; i < pr.size(); i++) {
+                    Object[] o = pr.get(i);
+                    labelled(q, bgc, lp, (String) o[0], (String) o[1], (String) o[2], (Integer) o[3], (Integer) o[4],
+                            Math.round(x + wdt[i] / 2), y, (String) o[5]);
+                    x += wdt[i] + 14;
                 }
-                case "hc": {
-                    boolean both = heart && calories;
-                    if (heart) labelled(q, bgc, lp, "♥", "heartrate", 3, both ? 60 : 120, y, "72");
-                    if (calories) labelled(q, bgc, lp, "kcal", "calorie", 4, both ? 180 : 120, y, "320");
-                    y += ROW_H;
-                    break;
-                }
-                case "steps":
-                    labelled(q, bgc, lp, "steps", "step", 5, 120, y, "5367");
-                    y += ROW_H;
-                    break;
-                case "battery":
-                    add(q, item("battery", (SIZE - 4 * q.sw) / 2, y, 4 * q.sw, ROW_H, "g3", 11, null), "80%");
-                    y += ROW_H;
-                    break;
-                default:
-                    y += 64;
+                y += ROW_H;
+            } else if ("time".equals(r)) {
+                add(q, item("time", (SIZE - timeW) / 2, y, timeW, q.timeH, "g1", 11, null), "10:08");
+                y += q.timeH;
+            } else if ("date".equals(r)) {
+                int dateW = 5 * q.sw + 4;
+                boolean both = date && weekday;
+                if (date) add(q, item("date", both ? SIZE / 2 - dateW - 4 : (SIZE - dateW) / 2, y, dateW, ROW_H, "g2", 11, 0), "11/21");
+                if (weekday) add(q, item("week", both ? SIZE / 2 + 8 : (SIZE - 50) / 2, y, 50, ROW_H, "week", 7, 0), "FRI");
+                y += ROW_H;
+            } else if ("battery".equals(r)) {
+                add(q, item("battery", (SIZE - 4 * q.sw) / 2, y, 4 * q.sw, ROW_H, "g3", 11, null), "80%");
+                y += ROW_H;
+            } else {
+                y += 64;
             }
-            y += GAP;
+            y += gap;
         }
 
         if (style == 1) {
@@ -246,15 +276,20 @@ public final class FaceDesign {
 
     private static void add(Parts q, JSONObject o, String sample) { q.items.put(o); q.sample.add(sample); }
 
+    private static float widthOf(Parts q, Paint lp, Object[] o) {
+        int digits = (Integer) o[4];
+        return lp.measureText((String) o[0]) + 4 + digits * q.sw + ("weather".equals(o[1]) ? 2 * q.sw : 0);
+    }
+
     /** A number with a small label drawn into the background on its left, centred around cx. */
-    private void labelled(Parts q, Canvas bgc, Paint lp, String label, String type, int digits, int cx, int y,
-                          String sample) throws Exception {
+    private void labelled(Parts q, Canvas bgc, Paint lp, String label, String type, String font, int fontnum,
+                          int digits, int cx, int y, String sample) throws Exception {
         float lw = lp.measureText(label) + 4;
-        int nw = digits * q.sw;
+        int nw = digits * q.sw + (type.equals("weather") ? 2 * q.sw : 0);
         float x0 = cx - (lw + nw) / 2f;
         Paint.FontMetrics fm = lp.getFontMetrics();
         bgc.drawText(label, x0, y + ROW_H / 2f - (fm.ascent + fm.descent) / 2f, lp);
-        add(q, item(type, Math.round(x0 + lw), y, nw, ROW_H, "g2", 10, null), sample);
+        add(q, item(type, Math.round(x0 + lw), y, nw, ROW_H, font, fontnum, type.equals("weather") ? 2 : null), sample);
     }
 
     private static JSONObject item(String type, int x, int y, int w, int h, String font, int num, Integer style)
@@ -268,7 +303,7 @@ public final class FaceDesign {
         return o;
     }
 
-    /** What the watch will show (10:08, Fri 11/21, 5367 steps, 72 bpm, 320 kcal, 80%). */
+    /** What the watch will show (10:08, Fri 11/21, 5367 steps, 72 bpm, 320 kcal, 21°C, 4.19 km, 80%). */
     public Bitmap preview() {
         try {
             Parts q = parts();
@@ -284,7 +319,9 @@ public final class FaceDesign {
                     continue;
                 }
                 if (t.equals("week")) { c.drawBitmap(q.days[4], o.getInt("x"), o.getInt("y"), null); continue; }
-                Bitmap[] set = t.equals("time") ? q.time : t.equals("battery") ? q.batt : q.small;
+                String fnt = o.getString("font");
+                Bitmap[] set = t.equals("time") ? q.time : fnt.equals("g3") ? q.batt : fnt.equals("g4") ? q.temp
+                        : fnt.equals("g5") ? q.dist : q.small;
                 String text = q.sample.get(i);
                 int w = 0;
                 for (char ch : text.toCharArray()) w += set[idx(ch)].getWidth();
@@ -308,7 +345,7 @@ public final class FaceDesign {
         c.restore();
     }
 
-    private static int idx(char ch) { return Character.isDigit(ch) ? ch - '0' : 10; }
+    private static int idx(char ch) { return Character.isDigit(ch) ? ch - '0' : ch == 'C' ? 11 : ch == 'F' ? 12 : 10; }
 
     private static byte[] raw(Bitmap b) {
         int[] px = new int[b.getWidth() * b.getHeight()];
@@ -326,7 +363,7 @@ public final class FaceDesign {
         iwf.put("battery", false); iwf.put("compress", "LZ4");
         iwf.put("item", q.items); iwf.put("bkground", "files0.png");
         JSONArray fl = new JSONArray();
-        for (String n : new String[]{"g1", "g2", "g3", "week"}) {
+        for (String n : new String[]{"g1", "g2", "g3", "g4", "g5", "week"}) {
             JSONObject f = new JSONObject();
             f.put("name", n); f.put("bpp", 16); f.put("format", "png");
             fl.put(f);
@@ -347,6 +384,8 @@ public final class FaceDesign {
         for (int i = 0; i < 11; i++) f.add("g1_" + i, raw(q.time[i]));
         for (int i = 0; i < 11; i++) f.add("g2_" + i, raw(q.small[i]));
         for (int i = 0; i < 11; i++) f.add("g3_" + i, raw(q.batt[i]));
+        for (int i = 0; i < 13; i++) f.add("g4_" + i, raw(q.temp[i]));
+        for (int i = 0; i < 11; i++) f.add("g5_" + i, raw(q.dist[i]));
         for (int i = 0; i < 7; i++) f.add("week_en_" + DAYS[i], raw(q.days[i]));
         return f.build();
     }

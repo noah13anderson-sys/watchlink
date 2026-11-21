@@ -45,6 +45,9 @@ public class DebugReceiver extends BroadcastReceiver {
             d.style = i.getIntExtra("designface", 0);
             d.heart = i.getBooleanExtra("hr", false);
             d.calories = i.getBooleanExtra("kcal", false);
+            d.weather = i.getBooleanExtra("weather", false);
+            d.distance = i.getBooleanExtra("dist", false);
+            d.steps = i.getBooleanExtra("steps", true);
             d.background = i.getIntExtra("bg", 0);
             d.font = i.getIntExtra("font", 0);
             new Thread(() -> {

@@ -48,7 +48,9 @@ public class FaceDesignerActivity extends Activity {
         plp.gravity = Gravity.CENTER_HORIZONTAL;
         plp.setMargins(0, Ui.dp(this, 16), 0, Ui.dp(this, 16));
         preview.setClipToOutline(true);
-        GradientDrawable frame = Ui.rounded(0xFF000000, Ui.dp(this, 36));
+        GradientDrawable frame = new GradientDrawable();   // the SW2S screen is round
+        frame.setShape(GradientDrawable.OVAL);
+        frame.setColor(0xFF000000);
         preview.setBackground(frame);
         root.addView(preview, plp);
 
@@ -76,6 +78,8 @@ public class FaceDesignerActivity extends Activity {
         toggle(extras, "Battery", () -> d.battery, v -> d.battery = v);
         toggle(extras, "Heart rate", () -> d.heart, v -> d.heart = v);
         toggle(extras, "Calories", () -> d.calories, v -> d.calories = v);
+        toggle(extras, "Weather (temperature)", () -> d.weather, v -> d.weather = v);
+        toggle(extras, "Distance", () -> d.distance, v -> d.distance = v);
 
         status = Ui.label(this, "", 14, false, Ui.subtext(this));
         status.setPadding(Ui.dp(this, 4), Ui.dp(this, 8), 0, Ui.dp(this, 8));
@@ -107,6 +111,8 @@ public class FaceDesignerActivity extends Activity {
         d.date = p.getBoolean("fd.date", true); d.weekday = p.getBoolean("fd.week", true);
         d.steps = p.getBoolean("fd.steps", true); d.battery = p.getBoolean("fd.batt", true);
         d.heart = p.getBoolean("fd.hr", false); d.calories = p.getBoolean("fd.kcal", false);
+        d.weather = p.getBoolean("fd.weather", false); d.distance = p.getBoolean("fd.dist", false);
+        d.miles = p.getBoolean("unit.miles", false);
         d.style = p.getInt("fd.style", 0);
         if (d.font >= FaceDesign.FONTS.length) d.font = 0;
         if (d.background == FaceDesign.BACKGROUNDS.length - 1) {
@@ -120,6 +126,7 @@ public class FaceDesignerActivity extends Activity {
                 .putInt("fd.ac", d.accentColor).putInt("fd.pos", d.position).putInt("fd.size", d.timeSize)
                 .putBoolean("fd.date", d.date).putBoolean("fd.week", d.weekday).putBoolean("fd.steps", d.steps)
                 .putBoolean("fd.batt", d.battery).putBoolean("fd.hr", d.heart).putBoolean("fd.kcal", d.calories)
+                .putBoolean("fd.weather", d.weather).putBoolean("fd.dist", d.distance)
                 .putInt("fd.style", d.style).apply();
     }
 
