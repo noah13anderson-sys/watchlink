@@ -89,7 +89,7 @@ public class WatchService extends Service {
         super.onDestroy();
     }
 
-    private void setStatus(String s) { status = s; Log.i(TAG, s); MainActivity.refresh(); }
+    private void setStatus(String s) { status = s; Log.i(TAG, s); MainActivity.refresh(); WatchWidget.update(this); }
 
     private void connect() {
         BluetoothAdapter ad = getSystemService(BluetoothManager.class).getAdapter();
@@ -384,6 +384,7 @@ public class WatchService extends Service {
 
     /** Download health data, one type after another (earlier days at most every 30 minutes, then today). */
     void requestHealth() {
+        if (FileTransfer.busy()) return;   // a face is uploading: catch up at the next poll
         healthIdx = 0;
         historyThisRun = System.currentTimeMillis() - lastHistorySync > 30 * 60_000L;
         if (historyThisRun) lastHistorySync = System.currentTimeMillis();
@@ -398,6 +399,7 @@ public class WatchService extends Service {
             healthReq++;
             MainActivity.refresh();
             HistoryActivity.refresh();
+            WatchWidget.update(this);
             return;
         }
         healthToday = !historyThisRun;
@@ -536,6 +538,7 @@ public class WatchService extends Service {
     private void recordActivity() {
         final long st = steps, kc = kcal, m = distance, act = activeTime;
         if (st < 0) return;
+        WatchWidget.update(this);
         final String day = HealthDb.today();
         final boolean changed = st != lastStepsSaved;
         lastStepsSaved = st;
@@ -571,6 +574,7 @@ public class WatchService extends Service {
     private void recordBattery() {
         final int b = battery;
         if (b >= 0) checkBattery(b);
+        WatchWidget.update(this);
         long now = System.currentTimeMillis();
         if (b < 0 || (b == lastBatterySaved && now - lastBatteryAt < 30 * 60_000L)) return;
         lastBatterySaved = b;

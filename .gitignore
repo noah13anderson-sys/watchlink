@@ -12,3 +12,5 @@ android/*
 !android/build.sh
 !android/src/
 !android/src/**
+!android/res/
+!android/res/**

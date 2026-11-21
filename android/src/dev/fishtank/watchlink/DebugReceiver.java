@@ -145,6 +145,24 @@ public class DebugReceiver extends BroadcastReceiver {
                 Log.i(WatchService.TAG, "debug demo history written");
             });
         }
+        if (i.hasExtra("widgetpreview")) {      // render the home screen widget to files/widget.png
+            try {
+                android.widget.FrameLayout parent = new android.widget.FrameLayout(c);
+                android.view.View v = WatchWidget.views(c).apply(c, parent);
+                int w = Math.round(320 * c.getResources().getDisplayMetrics().density),
+                        h = Math.round(130 * c.getResources().getDisplayMetrics().density);
+                v.measure(android.view.View.MeasureSpec.makeMeasureSpec(w, android.view.View.MeasureSpec.EXACTLY),
+                        android.view.View.MeasureSpec.makeMeasureSpec(h, android.view.View.MeasureSpec.EXACTLY));
+                v.layout(0, 0, w, h);
+                android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
+                b.eraseColor(0xFF4A5A70);
+                v.draw(new android.graphics.Canvas(b));
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(c.getExternalFilesDir(null), "widget.png"))) {
+                    b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o);
+                }
+                Log.i(WatchService.TAG, "debug widget preview written");
+            } catch (Exception e) { Log.w(WatchService.TAG, "widget preview", e); }
+        }
         if (i.hasExtra("v3cmd")) {
             byte[] payload = IdoProtocol.unhex(i.getStringExtra("v3") == null ? "" : i.getStringExtra("v3"));
             WatchService.sendV3(i.getIntExtra("v3cmd", 0), payload);
