@@ -498,6 +498,9 @@ public final class IdoProtocol {
      *  reply 00 01 + name). */
     public static byte[] faceSet(String name) { return faceOp(1, name); }
 
+    /** Operate 2 = delete this face (verified 2026-11-21: reply 00 02 + name, face gone from the 0x31 list). */
+    public static byte[] faceDelete(String name) { return faceOp(2, name); }
+
     public static byte[] faceOp(int operate, String name) {
         byte[] out = new byte[31];
         out[0] = (byte) operate;

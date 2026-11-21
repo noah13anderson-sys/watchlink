@@ -24,12 +24,13 @@ public class FacesActivity extends Activity {
         if (a != null) { a.answered = true; a.runOnUiThread(a::fill); }
     }
 
-    static void onSetResult(boolean ok) {
+    static void onSetResult(boolean ok, int operate) {
         FacesActivity a = current;
         if (a == null) return;
         a.runOnUiThread(() -> {
-            if (ok && a.pending != null) WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]);
-            Toast.makeText(a, ok ? "Watch face changed" : "The watch refused that face", Toast.LENGTH_SHORT).show();
+            if (ok) WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]);
+            Toast.makeText(a, !ok ? "The watch refused that" : operate == 2 ? "Face removed" : "Watch face changed",
+                    Toast.LENGTH_SHORT).show();
             a.pending = null;
             a.fill();
         });
@@ -46,7 +47,7 @@ public class FacesActivity extends Activity {
         root.setPadding(pad, Ui.dp(this, 28), pad, pad);
         root.setBackgroundColor(Ui.bg(this));
         root.addView(Ui.label(this, "Watch faces", 28, true, Ui.text(this)));
-        TextView sub = Ui.label(this, "Faces installed on your watch. Tap one to show it.", 14, false, Ui.subtext(this));
+        TextView sub = Ui.label(this, "Faces installed on your watch. Tap one to show it, long-press to remove it.", 14, false, Ui.subtext(this));
         sub.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 16));
         root.addView(sub);
         list = Ui.card(this, root);
@@ -99,10 +100,22 @@ public class FacesActivity extends Activity {
             String title = (mine ? "Your face " + f.replace(".iwf", "").substring(2) : "Face " + f.replace(".iwf", ""))
                     + (f.equals(fl.current) ? "   ✓" : "");
             String sub = f.equals(pending) ? "Sending…" : (fl.sizes.get(i) / 1024) + " KB" + (mine ? " · made in WatchLink" : "");
-            Ui.row(this, list, title, sub, v -> {
+            TextView r = Ui.row(this, list, title, sub, v -> {
                 pending = f;
                 WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceSet(f));
                 fill();
+            });
+            r.setOnLongClickListener(v -> {
+                new android.app.AlertDialog.Builder(this).setTitle("Remove " + title.replace("   ✓", "") + "?")
+                        .setMessage(mine ? "You can make it again in the designer."
+                                : "This face came with the Momax app. WatchLink can't download it again.")
+                        .setPositiveButton("Remove", (d, w) -> {
+                            WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceDelete(f));
+                            list.postDelayed(() -> WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]), 1500);
+                            Toast.makeText(this, "Removing…", Toast.LENGTH_SHORT).show();
+                        })
+                        .setNegativeButton("Cancel", null).show();
+                return true;
             });
         }
     }

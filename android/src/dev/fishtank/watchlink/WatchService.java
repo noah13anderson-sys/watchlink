@@ -350,7 +350,8 @@ public class WatchService extends Service {
             } else if (cmd == IdoProtocol.V3_FACE_LIST_NEW) {
                 IdoProtocol.FaceList fl = IdoProtocol.parseFaceListNew(payload);
                 if (fl != null) { faceList = fl; faces = fl.names; FacesActivity.refresh(); }
-            } else if (cmd == IdoProtocol.V3_FACE_SET) FacesActivity.onSetResult(payload.length > 0 && payload[0] == 0);
+            } else if (cmd == IdoProtocol.V3_FACE_SET) FacesActivity.onSetResult(payload.length > 0 && payload[0] == 0,
+                    payload.length > 1 ? payload[1] & 0xff : 1);
         }
     }
 

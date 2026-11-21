@@ -130,3 +130,40 @@ sunrise h, sunrise m, sunset h, sunset m,
   (Nordic secure DFU) or `00010203-0405-0607-0809-0a0b0c0d1912` (Telink OTA). The app then pushes the firmware image.
   The app's connection code checks for those services so it can resume an interrupted update.
 * Faces, fonts and other files go over the normal `0AF0` link with the library's `data_tran` file transfer, not through the bootloader.
+
+## Custom watch faces (verified 2026-11-21)
+
+Worked out from `mkWatchFace::makeIwfFile`, `bitmap_tool_get_font_buff`, `fastlz_util_compress_file` and
+`data_tran_*` in libprotocol_c.so. The image converter and FastLZ decoder were run under emulation
+(`tools/emu_bitmap.py`, `tools/emu_fastlz.py`) and WatchLink's output matches them byte for byte.
+
+**Watch limits** (v3 `0x07` screen info, v3 `0x31` face list): 240×240, image format `0x85`, block size 4096,
+5 downloadable-face slots, 2 MB for faces.
+
+**v3 `0x08`** = `u8 operate, name[30]`: operate `1` shows a face, `2` deletes it. Reply `err, operate, name`.
+
+**`.iwf` file:** `"iwf\0"`, u16 version 1, u16 file count, then one 40-byte entry per file
+(`name[30]`, 2 zero bytes, u32 offset from the start of the file, u32 length), then the file data.
+Files: `iwf.json` (layout, same schema as the cloud faces: `custom` widgets `time`/`date`/`week`/`step`/
+`battery`/`calorie` drawing digits from a font, plus `bkground`), `font.json`, the root images under their file
+name (`files0.png`, `preview.png`), and font images named `<font>_<n>` (`g1_0` … `g1_10`, `week_en_mon` …).
+Digit fonts have 11 images: 0–9 plus `:` (time), `/` (date) or `%` (battery); step/calorie fonts have 10.
+
+**Images:** 16-byte head `"RAW\0"`, u16 w, u16 h, u8 format `0x85`, u8 alpha format (`0x66` = 4-bit alpha
+plane, `0` = opaque), u16 0, u32 alpha offset; pixels RGB565 **big-endian**; then 4 bits of alpha per pixel
+(even pixel in the high nibble), left out for fully opaque images.
+
+**Compression:** the `.iwf` cut into 4096-byte blocks, each stored as u32 big-endian length + FastLZ level-2
+data (a block that doesn't shrink is stored as two halves). Name it `<face>.iwf.lz`.
+
+**Upload** (all on `0AF6`/`0AF7`, 20-byte headers):
+
+| Packet | Content | Reply |
+|---|---|---|
+| `D1 08` | type 6 (iwf), u32 uncompressed size, compression **2** (FastLZ), name (≤12 bytes, else a longer packet) | `D1 08 err` |
+| `D1 01` | type 6, u32 compressed size, 2, name | `D1 01 err` (`0x18`/`0x19` = busy making room, wait N s) |
+| `D1 05` | packets per acknowledgement (10) | `D1 05 err, prn` |
+| `D1 02` | `00` + up to MTU−3 bytes of data | every 10 packets: `D1 02 err, u32 byte sum so far, u32 offset` |
+| `D1 03` | u32 sum of all bytes of the `.lz` file | `D1 03 00` = installed (the watch switches to it) |
+
+Compression type 1 is accepted at every step but the face is silently dropped.
