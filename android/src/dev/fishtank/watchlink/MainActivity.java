@@ -134,6 +134,9 @@ public class MainActivity extends Activity {
         Ui.divider(this, watchCard);
         Ui.row(this, watchCard, "Alarms", "Set wake-up alarms on the watch", v ->
                 startActivity(new Intent(this, AlarmsActivity.class)));
+        Ui.divider(this, watchCard);
+        Ui.row(this, watchCard, "Watch settings", "Do not disturb, raise to wake, reminders, goals, units", v ->
+                startActivity(new Intent(this, SettingsActivity.class)));
 
         // ---- Notifications ----
         Ui.section(this, root, "Notifications");

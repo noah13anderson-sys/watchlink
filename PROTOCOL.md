@@ -33,7 +33,18 @@ The watch also has a classic Bluetooth side ("Momax SW2S BT", same address) for 
 | `06 04 00` / `06 04 01` | find device start / stop (acknowledged, but doesn't vibrate the SW2S) |
 | `07 01 xx` (watch→phone) | music/camera buttons: `01` play (the SW2S sends `01` for every play/pause press), `02` pause, `04` previous, `05` next, `08`/`09` volume, `0C`/`0D` answer/reject call |
 | `07 02` (watch→phone) | find my phone |
-| `07 40 …` (watch→phone) | sent on connect; meaning unknown |
+| `02 02` / `02 07` | function tables: which features the watch supports. Bit names are in the library's `protocol_func_table_*` structs (decoded list in `protocol_dump/sw2s_features.txt`, local only) |
+| `02 30` / `03 29` | do not disturb: `AA/55 on, start h, m, end h, m, …` (verified by readback) |
+| `02 B1` / `03 28` | raise to wake: `AA/55 on, show s, has range, start h, m, end h, m` (verified by readback) |
+| `02 47` / `03 47` | walk reminder: `on 1/0, u16 steps, start h, m, end h, m, days<<1` (verified by readback) |
+| `02 43` / `03 43` | calorie / distance goal: `u32 kcal, u32 metres, …` |
+| `02 B0` / `03 32` | screen brightness: readable (level 60), but writes are acked and **ignored** on the SW2S |
+| `03 20`, `03 60`, `03 55`, `03 03`, `03 10`, `03 11` | sedentary / drink water / hand washing reminders, step goal, profile, units: acked, effect *unverified* (no read command) |
+| `07 40 …` (watch→phone) | "data changed" (e.g. `07 40 00 00 10` after a DND change, `04` after brightness) |
+
+Notification icon types (v3 `0x0B` type field) follow the function-table bit order: 1 SMS, 2 email, 3 QQ, 4 WeChat, 5 Weibo, 6 Facebook, 7 Twitter, 8 WhatsApp, 9 Messenger, 10 Instagram, 11 LinkedIn, 12 calendar, 13 Skype, 16 VK, 17 Line, 18 Viber, 19 KakaoTalk, 20 Gmail, 21 Outlook, 22 Snapchat, 23 Telegram, 25 Slack, 28 YouTube, 32 TikTok. The SW2S accepts type 8.
+
+The complete command catalog extracted from the Momax library is in PROTOCOL_FULL.md.
 
 ## v3 frames
 

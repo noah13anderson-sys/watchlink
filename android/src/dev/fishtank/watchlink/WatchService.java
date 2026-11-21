@@ -270,9 +270,47 @@ public class WatchService extends Service {
                 h.post(() -> MediaControl.handle(WatchService.this, v[2] & 0xff));
             } else if (cmd == 0x07 && key == 0x02) {
                 h.post(() -> FindPhone.start(WatchService.this));
+            } else if (cmd == 0x07 && key == 0x40) {
+                // the watch says a setting changed (also after our own writes): read the settings again
+                h.removeCallbacks(readSettingsLater);
+                h.postDelayed(readSettingsLater, 1500);
+            } else if (cmd == 0x02 && (key == 0x30 || key == 0x47 || key == 0xB1 || key == 0x43)) {
+                h.post(() -> onSettingReply(key, v));
             }
         }
     };
+
+    // ---- Watch settings read back from the watch (02 30 / 02 47 / 02 B1 / 02 43) ----
+    static volatile byte[] lastGoalReply;
+    private final Runnable readSettingsLater = WatchService::readSettings;
+
+    /** Ask the watch for the settings it can report; replies land in the prefs (see onSettingReply). */
+    public static void readSettings() {
+        send(java.util.Arrays.asList(IdoProtocol.getDoNotDisturb(), IdoProtocol.getWalkReminder(),
+                IdoProtocol.getRaiseToWake(), IdoProtocol.getCalorieDistanceGoal()));
+    }
+
+    private static int b(byte[] v, int i) { return i < v.length ? v[i] & 0xff : 0; }
+
+    private void onSettingReply(int key, byte[] v) {
+        android.content.SharedPreferences.Editor e = getSharedPreferences(PREFS, 0).edit();
+        if (key == 0x30) {
+            e.putBoolean("dnd.on", b(v, 2) == 0xAA).putInt("dnd.sh", b(v, 3)).putInt("dnd.sm", b(v, 4))
+                    .putInt("dnd.eh", b(v, 5)).putInt("dnd.em", b(v, 6));
+        } else if (key == 0x47) {
+            e.putBoolean("walk.on", b(v, 2) != 0).putInt("walk.steps", b(v, 3) | b(v, 4) << 8)
+                    .putInt("walk.sh", b(v, 5)).putInt("walk.sm", b(v, 6)).putInt("walk.eh", b(v, 7))
+                    .putInt("walk.em", b(v, 8)).putInt("walk.days", IdoProtocol.daysFromField(b(v, 9)));
+        } else if (key == 0xB1) {
+            e.putBoolean("raise.on", b(v, 2) == 0xAA).putInt("raise.sec", b(v, 3)).putBoolean("raise.ranged", b(v, 4) != 0)
+                    .putInt("raise.sh", b(v, 5)).putInt("raise.sm", b(v, 6)).putInt("raise.eh", b(v, 7)).putInt("raise.em", b(v, 8));
+        } else if (key == 0x43 && v.length >= 10) {
+            lastGoalReply = v;
+            e.putInt("goal.kcal", (int) IdoProtocol.u32(v, 2)).putInt("goal.meters", (int) IdoProtocol.u32(v, 6));
+        }
+        e.apply();
+        SettingsActivity.refresh();
+    }
 
     static volatile int mtu = 23;
 

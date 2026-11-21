@@ -42,6 +42,7 @@ public class NotifyListener extends NotificationListenerService {
 
         String sender = app + (title != null ? ": " + title : "");
         WatchService.sendV3(IdoProtocol.V3_NOTICE,
-                IdoProtocol.noticeV3(0x01, sender, "", text == null ? "" : text.toString()));
+                IdoProtocol.noticeV3(getSharedPreferences(WatchService.PREFS, 0).getBoolean("appIcons", true)
+                        ? IdoProtocol.appType(sbn.getPackageName()) : 0x01, sender, "", text == null ? "" : text.toString()));
     }
 }

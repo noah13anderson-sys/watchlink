@@ -371,6 +371,126 @@ public final class IdoProtocol {
         return sb.toString().trim();
     }
 
+    // ---- Watch settings (layouts from the DWARF structs in libprotocol_c.so, see PROTOCOL_FULL.md) ----
+    // Days are a Mon..Sun mask (bit0 = Monday) and are sent in bits 1..7, like the alarms.
+    static int daysField(int monToSun) { return (monToSun & 0x7f) << 1; }
+    static int daysFromField(int v) { return (v >> 1) & 0x7f; }
+
+    /** 03 28 raise to wake (protocol_set_up_hand_gesture). AA/55; read back with 02 B1. Verified 2026-11-21. */
+    public static byte[] raiseToWake(boolean on, int showSec, boolean ranged, int sh, int sm, int eh, int em) {
+        return packet(0x03, 0x28, new byte[]{(byte) (on ? 0xAA : 0x55), (byte) showSec, (byte) (ranged ? 1 : 0),
+                (byte) sh, (byte) sm, (byte) eh, (byte) em});
+    }
+    public static byte[] getRaiseToWake() { return packet(0x02, 0xB1, null); }
+
+    /** 03 29 do not disturb (protocol_do_not_disturb). AA/55; read back with 02 30. Verified 2026-11-21. */
+    public static byte[] doNotDisturb(boolean on, int sh, int sm, int eh, int em) {
+        return packet(0x03, 0x29, new byte[]{(byte) (on ? 0xAA : 0x55), (byte) sh, (byte) sm, (byte) eh, (byte) em,
+                0, 0, 0x55, 0, 0, 0, 0, 0x55, 0x55});
+    }
+    public static byte[] getDoNotDisturb() { return packet(0x02, 0x30, null); }
+
+    /** 03 47 walk reminder (protocol_set_walk_reminder). on = 1/0; read back with 02 47. Verified 2026-11-21. */
+    public static byte[] walkReminder(boolean on, int steps, int sh, int sm, int eh, int em, int days) {
+        return packet(0x03, 0x47, new byte[]{(byte) (on ? 1 : 0), (byte) steps, (byte) (steps >> 8),
+                (byte) sh, (byte) sm, (byte) eh, (byte) em, (byte) daysField(days)});
+    }
+    public static byte[] getWalkReminder() { return packet(0x02, 0x47, null); }
+
+    /** 03 20 sedentary reminder (protocol_long_sit): times, u16 interval (min), u16 repeat (bit0 on + days). Unverified. */
+    public static byte[] sedentary(boolean on, int sh, int sm, int eh, int em, int intervalMin, int days) {
+        int rep = (on ? 1 : 0) | daysField(days);
+        return packet(0x03, 0x20, new byte[]{(byte) sh, (byte) sm, (byte) eh, (byte) em,
+                (byte) intervalMin, (byte) (intervalMin >> 8), (byte) rep, 0});
+    }
+
+    /** 03 60 drink-water reminder (protocol_drink_water_reminder). Unverified: on = 1/0 like the walk reminder. */
+    public static byte[] drinkWater(boolean on, int sh, int sm, int eh, int em, int days, int intervalMin) {
+        return packet(0x03, 0x60, new byte[]{(byte) (on ? 1 : 0), (byte) sh, (byte) sm, (byte) eh, (byte) em,
+                (byte) daysField(days), (byte) intervalMin, (byte) (intervalMin >> 8)});
+    }
+
+    /** 03 55 hand-washing reminder (protocol_set_hand_washing_reminder). Unverified: on = 1/0. */
+    public static byte[] handWashing(boolean on, int sh, int sm, int eh, int em, int days, int intervalMin) {
+        return packet(0x03, 0x55, new byte[]{(byte) (on ? 1 : 0), (byte) sh, (byte) sm, (byte) eh, (byte) em,
+                (byte) daysField(days), (byte) intervalMin, (byte) (intervalMin >> 8)});
+    }
+
+    /** 03 03 daily step goal (protocol_set_sport_goal, type 0 = steps) + sleep goal. Unverified (no read command). */
+    public static byte[] stepGoal(int steps, int sleepH, int sleepM) {
+        return packet(0x03, 0x03, new byte[]{0, (byte) steps, (byte) (steps >> 8), (byte) (steps >> 16), (byte) (steps >> 24),
+                (byte) sleepH, (byte) sleepM});
+    }
+
+    /** 03 43 calorie (kcal) + distance (m) goals; the other fields are sent back as the watch reported them. */
+    public static byte[] calorieDistanceGoal(int kcal, int meters, byte[] lastReply) {
+        byte[] p = new byte[18];
+        if (lastReply != null && lastReply.length > 2) System.arraycopy(lastReply, 2, p, 0, Math.min(18, lastReply.length - 2));
+        p[0] = (byte) kcal; p[1] = (byte) (kcal >> 8); p[2] = (byte) (kcal >> 16); p[3] = (byte) (kcal >> 24);
+        p[4] = (byte) meters; p[5] = (byte) (meters >> 8); p[6] = (byte) (meters >> 16); p[7] = (byte) (meters >> 24);
+        return packet(0x03, 0x43, p);
+    }
+    public static byte[] getCalorieDistanceGoal() { return packet(0x02, 0x43, null); }
+
+    /** 03 11 units (protocol_set_unit): 1 = metric/°C/24 h, 2 = imperial/°F/12 h; language 2 = English; stride cm. */
+    public static byte[] units(boolean miles, boolean pounds, boolean fahrenheit, boolean h12, int strideCm) {
+        return packet(0x03, 0x11, new byte[]{(byte) (miles ? 2 : 1), (byte) (pounds ? 2 : 1), (byte) (fahrenheit ? 2 : 1),
+                (byte) strideCm, 2, (byte) (h12 ? 2 : 1)});
+    }
+
+    /** 03 10 profile (protocol_set_user_info): height cm, u16 weight kg x100, gender (1 male / 2 female), birthday. */
+    public static byte[] userInfo(int heightCm, int weightKg, int gender, int year, int month, int day) {
+        int w = weightKg * 100;
+        return packet(0x03, 0x10, new byte[]{(byte) heightCm, (byte) w, (byte) (w >> 8), (byte) gender,
+                (byte) year, (byte) (year >> 8), (byte) month, (byte) day});
+    }
+
+    /** F0 01 reboot, F0 04 factory reset (erases the watch). */
+    public static byte[] reboot() { return packet(0xF0, 0x01, null); }
+    public static byte[] factoryReset() { return packet(0xF0, 0x04, null); }
+
+    /**
+     * Notification icon types. Order = the bits of the watch's function table (02 02 / 02 07), which is also IDO's
+     * numbering: 1 SMS, 2 email, 3 QQ, 4 WeChat, 5 Weibo, 6 Facebook, 7 Twitter, 8 WhatsApp, 9 Messenger,
+     * 10 Instagram, 11 LinkedIn, 12 calendar, 13 Skype, 15 other, 16 VK, 17 Line, 18 Viber, 19 KakaoTalk,
+     * 20 Gmail, 21 Outlook, 22 Snapchat, 23 Telegram, 24 Chatwork, 25 Slack, 26 Yahoo Mail, 27 Tumblr,
+     * 28 YouTube, 29 Pinterest, 32 TikTok. Icons beyond SMS not yet checked by eye on the SW2S.
+     */
+    public static int appType(String pkg) {
+        if (pkg == null) return 1;
+        switch (pkg) {
+            case "com.google.android.apps.messaging": case "com.android.mms": case "com.samsung.android.messaging":
+            case "com.coloros.mms": case "com.oplus.mms": return 1;
+            case "com.google.android.gm": return 20;
+            case "com.microsoft.office.outlook": return 21;
+            case "com.tencent.mobileqq": return 3;
+            case "com.tencent.mm": return 4;
+            case "com.sina.weibo": return 5;
+            case "com.facebook.katana": case "com.facebook.lite": return 6;
+            case "com.twitter.android": return 7;
+            case "com.whatsapp": case "com.whatsapp.w4b": return 8;
+            case "com.facebook.orca": case "com.facebook.mlite": return 9;
+            case "com.instagram.android": return 10;
+            case "com.linkedin.android": return 11;
+            case "com.google.android.calendar": case "com.samsung.android.calendar": case "com.coloros.calendar": return 12;
+            case "com.skype.raider": case "com.skype.insiders": return 13;
+            case "com.vkontakte.android": return 16;
+            case "jp.naver.line.android": return 17;
+            case "com.viber.voip": return 18;
+            case "com.kakao.talk": return 19;
+            case "com.snapchat.android": return 22;
+            case "org.telegram.messenger": case "org.thunderdog.challegram": case "org.telegram.plus": return 23;
+            case "jp.ecstudio.chatworkandroid": return 24;
+            case "com.Slack": return 25;
+            case "com.yahoo.mobile.client.android.mail": return 26;
+            case "com.tumblr": return 27;
+            case "com.google.android.youtube": return 28;
+            case "com.pinterest": return 29;
+            case "com.zhiliaoapp.musically": case "com.ss.android.ugc.trill": return 32;
+            default: return 1;
+        }
+    }
+
     // ---- Watch faces (v3) ----
     public static final int V3_FACE_LIST = 0x06, V3_FACE_SET = 0x08;
 
