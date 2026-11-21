@@ -33,6 +33,32 @@ public class DebugReceiver extends BroadcastReceiver {
                         });
             } catch (Exception e) { Log.w(WatchService.TAG, "sendfile", e); }
         }
+        if (i.hasExtra("importzip")) {          // --es importzip /data/local/tmp/x.zip  -> files/import.iwf
+            try (java.io.InputStream in = new java.io.FileInputStream(i.getStringExtra("importzip"))) {
+                dev.fishtank.watchlink.face.FaceImport f = dev.fishtank.watchlink.face.FaceImport.read(in);
+                java.nio.file.Files.write(new java.io.File(c.getExternalFilesDir(null), "import.iwf").toPath(), f.iwf);
+                Log.i(WatchService.TAG, "debug import ok " + f.name + " " + f.width + "x" + f.height + " " + f.iwf.length);
+            } catch (Exception e) { Log.w(WatchService.TAG, "debug import", e); }
+        }
+        if (i.hasExtra("designface")) {         // --ei designface 1 (analog) --ez hr true --ez kcal true --ei bg 2
+            dev.fishtank.watchlink.face.FaceDesign d = new dev.fishtank.watchlink.face.FaceDesign();
+            d.style = i.getIntExtra("designface", 0);
+            d.heart = i.getBooleanExtra("hr", false);
+            d.calories = i.getBooleanExtra("kcal", false);
+            d.background = i.getIntExtra("bg", 0);
+            d.font = i.getIntExtra("font", 0);
+            new Thread(() -> {
+                try {
+                    String name = FaceInstaller.nextName();
+                    byte[] iwf = d.build(name.replace(".iwf", ""));
+                    java.nio.file.Files.write(new java.io.File(c.getExternalFilesDir(null), "design.iwf").toPath(), iwf);
+                    try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(c.getExternalFilesDir(null), "design.png"))) {
+                        d.preview().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o);
+                    }
+                    FaceInstaller.install(name, iwf, (t, done) -> Log.i(WatchService.TAG, "debug design: " + t));
+                } catch (Exception e) { Log.w(WatchService.TAG, "debug design", e); }
+            }).start();
+        }
         if (i.hasExtra("v3cmd")) {
             byte[] payload = IdoProtocol.unhex(i.getStringExtra("v3") == null ? "" : i.getStringExtra("v3"));
             WatchService.sendV3(i.getIntExtra("v3cmd", 0), payload);

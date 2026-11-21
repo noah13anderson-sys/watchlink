@@ -18,6 +18,56 @@ public class FacesActivity extends Activity {
     private String pending;
 
     private volatile boolean answered;
+    private static final int IMPORT = 7;
+
+    @Override protected void onActivityResult(int req, int res, android.content.Intent data) {
+        if (req != IMPORT || res != RESULT_OK || data == null || data.getData() == null) return;
+        Toast.makeText(this, "Reading the face…", Toast.LENGTH_SHORT).show();
+        android.net.Uri uri = data.getData();
+        new Thread(() -> {
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                dev.fishtank.watchlink.face.FaceImport f = dev.fishtank.watchlink.face.FaceImport.read(in);
+                runOnUiThread(() -> confirmImport(f));
+            } catch (Exception e) {
+                runOnUiThread(() -> new android.app.AlertDialog.Builder(this).setTitle("Can't use this file")
+                        .setMessage(String.valueOf(e.getMessage())).setPositiveButton("OK", null).show());
+            }
+        }).start();
+    }
+
+    private void confirmImport(dev.fishtank.watchlink.face.FaceImport f) {
+        LinearLayout box = Ui.column(this);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, pad / 2, pad, 0);
+        if (f.preview != null) {
+            android.widget.ImageView iv = new android.widget.ImageView(this);
+            iv.setImageBitmap(f.preview);
+            iv.setAdjustViewBounds(true);
+            box.addView(iv, new LinearLayout.LayoutParams(-1, Ui.dp(this, 180)));
+        }
+        String msg = (f.description.isEmpty() ? "" : f.description + " · ") + f.iwf.length / 1024 + " KB";
+        if (f.width > 0 && (f.width != 240 || f.height != 240))
+            msg += "\n\nThis face was made for a " + f.width + "×" + f.height
+                    + " screen. The SW2S is 240×240, so parts of it may be cut off or out of place.";
+        TextView t = Ui.label(this, msg, 14, false, 0xFF444444);
+        t.setPadding(0, Ui.dp(this, 10), 0, 0);
+        box.addView(t);
+        new android.app.AlertDialog.Builder(this).setTitle("Install " + (f.name.isEmpty() ? "this face" : f.name) + "?")
+                .setView(box)
+                .setPositiveButton("Install", (d, w) -> {
+                    String name = FaceInstaller.nextName();
+                    Toast.makeText(this, "Sending to the watch…", Toast.LENGTH_SHORT).show();
+                    FaceInstaller.install(name, f.iwf, (text, done) -> {
+                        if (done) {
+                            new android.app.AlertDialog.Builder(this).setMessage(text).setPositiveButton("OK", null).show();
+                            WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]);
+                        } else if (text.endsWith("0%")) {
+                            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
 
     static void refresh() {
         FacesActivity a = current;
@@ -53,6 +103,10 @@ public class FacesActivity extends Activity {
         list = Ui.card(this, root);
         LinearLayout newRow = new LinearLayout(this);
         Ui.primary(this, newRow, "Design a new face", v -> startActivity(new android.content.Intent(this, FaceDesignerActivity.class)));
+        Ui.primary(this, newRow, "Import (.zip)", v -> startActivityForResult(
+                new android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).setType("application/zip")
+                        .putExtra(android.content.Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"}),
+                IMPORT));
         root.addView(newRow, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView sv = new ScrollView(this);

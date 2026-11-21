@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.fishtank.watchlink.face.FaceDesign;
-import dev.fishtank.watchlink.face.IwfFile;
 
 /** Design a watch face on the phone and install it on the watch. */
 public class FaceDesignerActivity extends Activity {
@@ -53,6 +52,8 @@ public class FaceDesignerActivity extends Activity {
         preview.setBackground(frame);
         root.addView(preview, plp);
 
+        Ui.section(this, root, "Style");
+        chips(root, FaceDesign.STYLES, () -> d.style, i -> d.style = i);
         Ui.section(this, root, "Background");
         chips(root, FaceDesign.BACKGROUNDS, () -> d.background, i -> {
             if (i == FaceDesign.BACKGROUNDS.length - 1) {
@@ -64,7 +65,7 @@ public class FaceDesignerActivity extends Activity {
         chips(root, new String[]{"Small", "Medium", "Large"}, () -> d.timeSize == 52 ? 0 : d.timeSize == 76 ? 2 : 1,
                 i -> d.timeSize = i == 0 ? 52 : i == 2 ? 76 : 64);
         colors(root, () -> d.timeColor, c -> d.timeColor = c);
-        Ui.section(this, root, "Layout");
+        Ui.section(this, root, "Layout (digital)");
         chips(root, FaceDesign.POSITIONS, () -> d.position, i -> d.position = i);
         Ui.section(this, root, "Extras");
         colors(root, () -> d.accentColor, c -> d.accentColor = c);
@@ -73,6 +74,8 @@ public class FaceDesignerActivity extends Activity {
         toggle(extras, "Weekday", () -> d.weekday, v -> d.weekday = v);
         toggle(extras, "Steps", () -> d.steps, v -> d.steps = v);
         toggle(extras, "Battery", () -> d.battery, v -> d.battery = v);
+        toggle(extras, "Heart rate", () -> d.heart, v -> d.heart = v);
+        toggle(extras, "Calories", () -> d.calories, v -> d.calories = v);
 
         status = Ui.label(this, "", 14, false, Ui.subtext(this));
         status.setPadding(Ui.dp(this, 4), Ui.dp(this, 8), 0, Ui.dp(this, 8));
@@ -103,6 +106,9 @@ public class FaceDesignerActivity extends Activity {
         d.position = p.getInt("fd.pos", 0); d.timeSize = p.getInt("fd.size", 64);
         d.date = p.getBoolean("fd.date", true); d.weekday = p.getBoolean("fd.week", true);
         d.steps = p.getBoolean("fd.steps", true); d.battery = p.getBoolean("fd.batt", true);
+        d.heart = p.getBoolean("fd.hr", false); d.calories = p.getBoolean("fd.kcal", false);
+        d.style = p.getInt("fd.style", 0);
+        if (d.font >= FaceDesign.FONTS.length) d.font = 0;
         if (d.background == FaceDesign.BACKGROUNDS.length - 1) {
             d.photo = BitmapFactory.decodeFile(new java.io.File(getFilesDir(), "face_photo.png").getPath());
             if (d.photo == null) d.background = 0;
@@ -113,7 +119,8 @@ public class FaceDesignerActivity extends Activity {
         p.edit().putInt("fd.bg", d.background).putInt("fd.font", d.font).putInt("fd.tc", d.timeColor)
                 .putInt("fd.ac", d.accentColor).putInt("fd.pos", d.position).putInt("fd.size", d.timeSize)
                 .putBoolean("fd.date", d.date).putBoolean("fd.week", d.weekday).putBoolean("fd.steps", d.steps)
-                .putBoolean("fd.batt", d.battery).apply();
+                .putBoolean("fd.batt", d.battery).putBoolean("fd.hr", d.heart).putBoolean("fd.kcal", d.calories)
+                .putInt("fd.style", d.style).apply();
     }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
@@ -150,56 +157,15 @@ public class FaceDesignerActivity extends Activity {
     }
 
     // ---- install ----
-    private String nextName() {
-        IdoProtocol.FaceList fl = WatchService.faceList;
-        for (int n = 1; n < 100; n++) {
-            String name = "wl" + n + ".iwf";
-            if (fl == null || !fl.names.contains(name)) return name;
-        }
-        return "wl99.iwf";
-    }
-
     private void install() {
         if (installing) return;
-        if (WatchService.instance == null) { status.setText("Not connected to the watch."); return; }
-        IdoProtocol.FaceList fl = WatchService.faceList;
         installing = true;
         status.setText("Building the face…");
-        String name = nextName();
+        String name = FaceInstaller.nextName();
         new Thread(() -> {
             try {
                 byte[] iwf = d.build(name.replace(".iwf", ""));
-                byte[] lz = IwfFile.compress(iwf, 4096);
-                runOnUiThread(() -> {
-                    if (fl != null && iwf.length > fl.free) {
-                        installing = false;
-                        status.setText("Not enough room on the watch (" + iwf.length / 1024 + " KB needed, "
-                                + fl.free / 1024 + " KB free). Remove a face in Watch faces first.");
-                        return;
-                    }
-                    if (fl != null && fl.installed >= fl.slots) {
-                        installing = false;
-                        status.setText("The watch already has " + fl.installed + " of " + fl.slots
-                                + " faces. Remove one in Watch faces first.");
-                        return;
-                    }
-                    status.setText("Sending to the watch…");
-                    FileTransfer.start(FileTransfer.TYPE_IWF, name + ".lz", lz, 2, iwf.length, new FileTransfer.Listener() {
-                        @Override public void onProgress(int pc) {
-                            runOnUiThread(() -> status.setText("Sending to the watch… " + pc + "%"));
-                        }
-                        @Override public void onDone(boolean ok, String msg) {
-                            runOnUiThread(() -> {
-                                installing = false;
-                                if (ok) {
-                                    WatchService.sendV3(IdoProtocol.V3_FACE_SET, IdoProtocol.faceSet(name));
-                                    WatchService.sendV3(IdoProtocol.V3_FACE_LIST_NEW, new byte[0]);
-                                    status.setText("Installed as " + name.replace(".iwf", "") + " and shown on the watch.");
-                                } else status.setText("Didn't work: " + msg);
-                            });
-                        }
-                    });
-                });
+                FaceInstaller.install(name, iwf, (text, done) -> { status.setText(text); if (done) installing = false; });
             } catch (Exception e) {
                 runOnUiThread(() -> { installing = false; status.setText("Couldn't build the face: " + e); });
             }

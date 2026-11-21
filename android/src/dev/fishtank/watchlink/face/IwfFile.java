@@ -83,6 +83,31 @@ public final class IwfFile {
     }
 
     /**
+     * RAW bitmap format 0x66, used for fonts with "bpp": 4: head as above with format 0x66 and alpha format 0,
+     * then 4 bits of grey per pixel ((30R + 59G + 11B) / 100, top 4 bits), even pixel in the high nibble.
+     * Byte-identical to the library on the sample face.
+     */
+    public static byte[] raw4(int[] argb, int w, int h) {
+        int n = w * h;
+        byte[] g = new byte[(n + 1) / 2];
+        for (int i = 0; i < n; i++) {
+            int c = argb[i];
+            int v = (((c >> 16) & 0xff) * 30 + ((c >> 8) & 0xff) * 59 + (c & 0xff) * 11) / 100;
+            g[i / 2] |= (byte) ((v >> 4) << ((i & 1) == 0 ? 4 : 0));
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write('R'); out.write('A'); out.write('W'); out.write(0);
+        le16(out, w);
+        le16(out, h);
+        out.write(0x66);
+        out.write(0);
+        le16(out, 0);
+        le32(out, 0);
+        out.write(g, 0, g.length);
+        return out.toByteArray();
+    }
+
+    /**
      * ".iwf.lz" file as compress_file_to_lz / fastlz_util_compress_file make it: the input cut into
      * blockSize blocks (4096 on the SW2S, from v3 0x07), each written as u32 big-endian length + FastLZ level-2
      * data. A block that doesn't shrink below blockSize is written as two halves instead.

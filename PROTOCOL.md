@@ -167,3 +167,11 @@ data (a block that doesn't shrink is stored as two halves). Name it `<face>.iwf.
 | `D1 03` | u32 sum of all bytes of the `.lz` file | `D1 03 00` = installed (the watch switches to it) |
 
 Compression type 1 is accepted at every step but the face is silently dropped.
+
+Fonts with `"bpp": 4` (and root images whose name contains `_4bit`) use image format `0x66`: the same 16-byte
+head with format `0x66` and alpha format 0, then 4 bits of grey per pixel ((30R + 59G + 11B) / 100, top 4 bits).
+
+Analog hands: a `"widget": "watch", "type": "time"` item names hour/minute/second images (`hour`, `minute`,
+`second`) with the rotation point inside each image (`hourcenterx/y` …) and on the screen (`houranchorx/y` …).
+Widget types seen in the Momax app: `time`, `date`, `week`, `step`, `calorie`, `battery`; `heartrate` is
+*unverified* on the SW2S.
