@@ -108,7 +108,25 @@ stores them in its own database before confirming). Activity (`4`) and HRV (`16`
 * `data` items are `(u8 delta, u8 value)`. A value of 0 is filler (e.g. `ff 00` = 255-unit gap).
 * Heart rate: start time and deltas are in **seconds** after midnight.
 * Stress and SpO2: start time and deltas are in **minutes**.
-* Sleep: 40-byte head with `u16 total minutes` at head+6 and the stage count at head+22. Items are `(stage, minutes)`; stage codes are *unverified*.
+* Sleep (verified on a real night, 2026-11-22): the head is `protocol_v3_sleep_head`, 40 bytes:
+
+  | Offset | Field |
+  |---|---|
+  | 0 | version (3) |
+  | 1 | data type (1) |
+  | 2..7 | fell asleep: `u16 year`, month, day, hour, minute |
+  | 8..13 | woke up, same layout (while still asleep: the time of the latest data) |
+  | 14 | `u16` total minutes |
+  | 16, 18, 20, 22 | `u16` awake, light, REM, deep minutes |
+  | 24..27 | awake, light, REM, deep counts |
+  | 28 | awrr status |
+  | 29 | sleep score (83 on the test night) |
+  | 30 | `u16` item count |
+  | 32 | breath quality |
+  | 33, 34, 35 | average heart rate, SpO2, breathing rate (`0xff` = not measured on the SW2S) |
+  | 36..38 | nap splicing (`0xff`) |
+
+  Items are `(u8 stage, u8 minutes)` in order from falling asleep. Stages: `1` awake, `2` light, `3` deep, `4` REM. The per-stage counts and minutes in the head match the items exactly. The watch rewrites the night about every 10 minutes while it goes on, sometimes regrouping the stages, so keep the latest reply. `is_today=0` returned the same (today's) night.
 * `offset` skips that many items. Past the end, the watch starts over from 0.
 
 ### Weather (`0x3A`, version 3 layout)
