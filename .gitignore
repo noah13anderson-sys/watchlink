@@ -2,6 +2,7 @@
 # Momax/IDO binaries, decompiled code, phone logs and bug reports must never be committed.
 *
 !.gitignore
+!LICENSE
 !README.md
 !PROTOCOL.md
 !sw2s.py

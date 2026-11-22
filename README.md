@@ -65,3 +65,7 @@ classic (calling) side with the PC, which takes the watch away from your phone.
 ## Protocol
 
 See [PROTOCOL.md](PROTOCOL.md).
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). WatchLink is not affiliated with Momax or IDO.
