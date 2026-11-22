@@ -28,7 +28,7 @@ plus PC tools and notes on the watch's Bluetooth protocol.
 | History: every heart rate, stress and blood oxygen reading, steps per 15 minutes, calories, nights with sleep stages and watch battery kept on the phone, with day-by-day charts and CSV export | ✅ |
 | Earlier days: readings the watch took while the phone was away are fetched on the next connect | ✅ |
 | Home screen widget (watch battery, steps, heart rate, blood oxygen) and a low watch battery alert | ✅ |
-| Find my watch (a "Find watch" message every 5 s until Stop, at most 20 s) | ✅ |
+| Find my watch: buzzes every 4 s until you press Stop (in the app or the pop-up notification), keeps going with the app closed, safety stop after 5 minutes | ✅ |
 | Music: watch play/pause/next/prev control the phone's player | ✅ play/pause; pair "Calls & music" for full AVRCP control |
 | Battery & firmware | ✅ |
 

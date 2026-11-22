@@ -407,6 +407,7 @@ public class WatchService extends Service {
         // and the next request then goes out right behind it (the watch mixes up two replies at once).
         // Connecting starts a sync by itself, 3 s after it is ready.
         if (!ready) return;
+        if (finding) return;               // big health replies would hold back the find-watch buzzes
         if (FileTransfer.busy()) return;   // a face is uploading: catch up at the next poll
         // one sync at a time: a second request (connect + first poll come seconds apart) used to restart the running
         // sync and skip the earlier-days pass; a sync that hangs is replaced after 2 minutes
@@ -668,6 +669,72 @@ public class WatchService extends Service {
 
     @Override public int onStartCommand(Intent i, int f, int id) {
         if (i != null && FindPhone.ACTION_STOP.equals(i.getAction())) FindPhone.stop(this);
+        if (i != null && ACTION_STOP_FIND.equals(i.getAction())) stopFinding();
         return START_STICKY;
+    }
+
+    // ---- Find watch ----
+    // The find-device command (06 04) is acknowledged but doesn't buzz the SW2S, and the motor command (03 53) gets
+    // no answer; a notice always buzzes the watch and lights its screen. So: one every 4 s until stopped (Stop on the
+    // main screen or in the phone notification), with a safety stop after 5 minutes. Runs here, not in the screen,
+    // so it keeps going when the app is closed.
+    static final String ACTION_STOP_FIND = "dev.fishtank.watchlink.STOP_FIND";
+    static volatile boolean finding;
+    private long findUntil;
+    private final Runnable findPulse = new Runnable() {
+        @Override public void run() {
+            if (!finding) return;
+            if (System.currentTimeMillis() > findUntil) { stopFinding(); return; }
+            // out of range: skip this one (nothing piles up in the queue) and buzz again once it reconnects
+            if (ready) sendV3(IdoProtocol.V3_NOTICE,
+                    IdoProtocol.noticeV3(0x01, "Find watch", "", "Your phone is looking for this watch"));
+            h.postDelayed(this, 4000);
+        }
+    };
+
+    /** Start or stop finding the watch. */
+    static void findWatch(boolean on) {
+        WatchService s = instance;
+        if (s != null) s.h.post(on ? s::startFinding : s::stopFinding);
+    }
+
+    private void startFinding() {
+        if (finding) return;
+        finding = true;
+        findUntil = System.currentTimeMillis() + 5 * 60_000L;
+        if (ready) { queue.add(IdoProtocol.findWatch(true)); pump(); }
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        // high importance so it pops up with its Stop button (low-importance ones end up collapsed at the bottom of
+        // the shade), but silent: no sound or vibration on the phone
+        nm.deleteNotificationChannel("findwatch");   // the first, low-importance version
+        NotificationChannel ch = new NotificationChannel("find_watch", "Find watch", NotificationManager.IMPORTANCE_HIGH);
+        ch.setSound(null, null);
+        ch.enableVibration(false);
+        nm.createNotificationChannel(ch);
+        android.app.PendingIntent stop = android.app.PendingIntent.getForegroundService(this, 4,
+                new Intent(this, WatchService.class).setAction(ACTION_STOP_FIND), android.app.PendingIntent.FLAG_IMMUTABLE);
+        android.app.PendingIntent open = android.app.PendingIntent.getActivity(this, 5,
+                new Intent(this, MainActivity.class), android.app.PendingIntent.FLAG_IMMUTABLE);
+        nm.notify(4, new Notification.Builder(this, "find_watch")
+                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                .setContentTitle("Finding your watch")
+                .setContentText("It buzzes every few seconds until you stop it")
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setContentIntent(open)
+                .addAction(new Notification.Action.Builder(null, "Stop", stop).build())
+                .build());
+        h.post(findPulse);
+        MainActivity.refresh();
+    }
+
+    private void stopFinding() {
+        if (!finding) return;
+        finding = false;
+        h.removeCallbacks(findPulse);
+        if (ready) { queue.add(IdoProtocol.findWatch(false)); pump(); }
+        getSystemService(NotificationManager.class).cancel(4);
+        MainActivity.refresh();
     }
 }

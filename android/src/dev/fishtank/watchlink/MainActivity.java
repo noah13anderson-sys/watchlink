@@ -26,7 +26,6 @@ public class MainActivity extends Activity {
     private static MainActivity current;
     private TextView statusText, batteryText, firmwareText, stepsVal, kcalVal, kcalSub, distVal, hrVal, hrSub, pairRow, weatherRow, stressVal, stressSub, spo2Val, spo2Sub, sleepVal, sleepSub, findBtn;
     private View statusDot;
-    private boolean finding;
     private final Handler h = new Handler(Looper.getMainLooper());
 
     static void refresh() {
@@ -255,32 +254,11 @@ public class MainActivity extends Activity {
         return v;
     }
 
-    /**
-     * Find watch: the official "find device" command (06 04 00/01) is acknowledged by the SW2S but doesn't buzz it,
-     * and the motor command (03 53) gets no answer at all. A notification always buzzes the watch and lights the
-     * screen, so send one every 5 s until stopped (at most 4, ~20 s).
-     */
+    /** Find watch: the watch buzzes every few seconds until stopped (see WatchService.findWatch). */
     private void toggleFind() {
-        finding = !finding;
-        findBtn.setText(finding ? "Stop" : "Find watch");
-        if (finding) {
-            WatchService.send(Collections.singletonList(IdoProtocol.findWatch(true)));
-            pulse(0);
-        } else {
-            h.removeCallbacks(pulser);
-            WatchService.send(Collections.singletonList(IdoProtocol.findWatch(false)));
-        }
-    }
-
-    private int pulses;
-    private final Runnable pulser = () -> pulse(pulses + 1);
-
-    private void pulse(int n) {
-        pulses = n;
-        if (!finding) return;
-        if (n >= 4) { toggleFind(); return; }            // stop after ~20 s
-        WatchService.sendV3(IdoProtocol.V3_NOTICE, IdoProtocol.noticeV3(0x01, "Find watch", "", "Your phone is looking for this watch"));
-        h.postDelayed(pulser, 5000);
+        boolean on = !WatchService.finding;
+        WatchService.findWatch(on);
+        findBtn.setText(on ? "Stop" : "Find watch");
     }
 
     /** Android 14 refuses to start a connected-device service before BLUETOOTH_CONNECT is granted. */
@@ -340,6 +318,7 @@ public class MainActivity extends Activity {
                 : "Not paired: tap to pair for call audio and music buttons");
         Ui.setRow(this, weatherRow, "Weather", Weather.summary.isEmpty()
                 ? "Sends the forecast to the watch · tap to update" : Weather.summary + " · tap to update");
+        findBtn.setText(WatchService.finding ? "Stop" : "Find watch");
         IdoProtocol.SleepNight night = WatchService.lastNight;
         if (night != null) {
             sleepVal.setText(night.total / 60 + "h " + night.total % 60 + "m");
