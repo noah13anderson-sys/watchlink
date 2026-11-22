@@ -158,6 +158,19 @@ public class DebugReceiver extends BroadcastReceiver {
                 Log.i(WatchService.TAG, "debug widget preview written");
             } catch (Exception e) { Log.w(WatchService.TAG, "widget preview", e); }
         }
+        if (i.hasExtra("iconpreview")) {        // render the launcher icon (as the launcher masks it) to files/icon.png
+            try {
+                android.graphics.drawable.Drawable d = c.getPackageManager().getApplicationIcon(c.getPackageName());
+                android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(432, 432, android.graphics.Bitmap.Config.ARGB_8888);
+                b.eraseColor(0xFF6A7F99);
+                d.setBounds(48, 48, 384, 384);
+                d.draw(new android.graphics.Canvas(b));
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(c.getExternalFilesDir(null), "icon.png"))) {
+                    b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o);
+                }
+                Log.i(WatchService.TAG, "debug icon preview written");
+            } catch (Exception e) { Log.w(WatchService.TAG, "icon preview", e); }
+        }
         if (i.hasExtra("v3cmd")) {
             byte[] payload = IdoProtocol.unhex(i.getStringExtra("v3") == null ? "" : i.getStringExtra("v3"));
             WatchService.sendV3(i.getIntExtra("v3cmd", 0), payload);

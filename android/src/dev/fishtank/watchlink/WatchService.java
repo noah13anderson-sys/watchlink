@@ -77,7 +77,12 @@ public class WatchService extends Service {
         if (android.os.Build.VERSION.SDK_INT >= 29)
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         else startForeground(1, n);
-        HealthDb.run(() -> lastNight = HealthDb.get(this).night(HealthDb.today()));
+        HealthDb.run(() -> {
+            HealthDb db = HealthDb.get(this);
+            lastNight = db.night(HealthDb.today());
+            long[] t = db.dayTotals(HealthDb.today());
+            if (t != null && t[1] >= 0 && activeKcal < 0) activeKcal = (int) t[1];
+        });
         connect();
     }
 
@@ -152,6 +157,13 @@ public class WatchService extends Service {
             busy = false;
         }
         if (!ready || busy || queue.isEmpty() || gatt == null) return;
+        // a reply is arriving: writing now makes the watch drop parts of it (seen with the 5 KB heart-rate reply),
+        // so wait until it is complete (or has stalled)
+        long now = android.os.SystemClock.uptimeMillis();
+        if (v3want >= 0 && now - v3LastPacket < 4000 && now - v3FrameStart < 20000) {
+            h.postDelayed(this::pump, 300);
+            return;
+        }
         byte[] p = queue.poll();
         writeChar.setValue(p);
         writeChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
@@ -326,16 +338,19 @@ public class WatchService extends Service {
 
     // ---- v3 receive: reassemble 0x33 packets into frames ----
     private final java.io.ByteArrayOutputStream v3buf = new java.io.ByteArrayOutputStream();
-    private int v3want = -1;
+    private volatile int v3want = -1;
+    private volatile long v3LastPacket, v3FrameStart;
 
     private void onV3Packet(byte[] v) {
         if (v.length >= 8 && (v[1] & 0xff) == 0xDA && (v[2] & 0xff) == 0xAD) {   // first packet of a frame
             v3buf.reset();
+            v3FrameStart = android.os.SystemClock.uptimeMillis();
             int cmd = (v[8] & 0xff) | (v[9] & 0xff) << 8;
             // health data (cmd 4) frames come without the 2-byte CRC
             v3want = ((v[6] & 0xff) | (v[7] & 0xff) << 8) + (cmd == IdoProtocol.V3_HEALTH ? 0 : 2);
         }
         if (v3want < 0) return;
+        v3LastPacket = android.os.SystemClock.uptimeMillis();
         v3buf.write(v, 1, v.length - 1);
         if (v3buf.size() >= v3want) {
             byte[] f = v3buf.toByteArray();
@@ -364,7 +379,7 @@ public class WatchService extends Service {
     /** Faces with sizes and free space (v3 0x31), null until the watch has answered. */
     static volatile IdoProtocol.FaceList faceList;
 
-    // ---- Health sync: heart rate, stress, SpO2, sleep (one type at a time) ----
+    // ---- Health sync: heart rate, stress, SpO2, sleep, daily activity (one type at a time) ----
     // For each type the watch is first asked for earlier days it still holds (oldest first). Each finished day is
     // saved to HealthDb and only then confirmed (operate 1) so the watch moves on to the next day. Then today.
     /** Latest value, its time (seconds after midnight, -1 = none), and today's min/max. */
@@ -372,21 +387,32 @@ public class WatchService extends Service {
     static final Series hr = new Series(), stress = new Series(), spo2 = new Series();
     /** The night that ended this morning (see HealthDb.nightDay), or null. */
     static volatile IdoProtocol.SleepNight lastNight;
+    /** Today's activity calories (what the watch shows; live data only has the total with resting burn), -1 = unknown. */
+    static volatile int activeKcal = -1;
     // kept for older callers
     static volatile int heartRate, hrTime = -1, hrMin, hrMax;
 
     private static final int[] HEALTH_TYPES = {IdoProtocol.HEALTH_TYPE_HR, IdoProtocol.HEALTH_TYPE_STRESS,
-            IdoProtocol.HEALTH_TYPE_SPO2, IdoProtocol.HEALTH_TYPE_SLEEP};
+            IdoProtocol.HEALTH_TYPE_SPO2, IdoProtocol.HEALTH_TYPE_SLEEP, IdoProtocol.HEALTH_TYPE_SPORT};
     private int healthIdx = -1, healthOffset, healthReq, healthDays;
     /** false while catching up on earlier days. */
-    private boolean healthToday, historyThisRun;
+    private boolean healthToday, historyThisRun, healthRetried;
     private String lastHistoryDay;
-    private long lastHistorySync;
+    private long lastHistorySync, healthStarted;
     private final List<int[]> healthSamples = new java.util.ArrayList<>();
 
     /** Download health data, one type after another (earlier days at most every 30 minutes, then today). */
     void requestHealth() {
+        // not before the connection is ready: the request would wait in the queue while its timeout runs out,
+        // and the next request then goes out right behind it (the watch mixes up two replies at once).
+        // Connecting starts a sync by itself, 3 s after it is ready.
+        if (!ready) return;
         if (FileTransfer.busy()) return;   // a face is uploading: catch up at the next poll
+        // one sync at a time: a second request (connect + first poll come seconds apart) used to restart the running
+        // sync and skip the earlier-days pass; a sync that hangs is replaced after 2 minutes
+        long now = android.os.SystemClock.uptimeMillis();
+        if (healthIdx >= 0 && now - healthStarted < 120_000) return;
+        healthStarted = now;
         healthIdx = 0;
         historyThisRun = System.currentTimeMillis() - lastHistorySync > 30 * 60_000L;
         if (historyThisRun) lastHistorySync = System.currentTimeMillis();
@@ -405,6 +431,7 @@ public class WatchService extends Service {
             return;
         }
         healthToday = !historyThisRun;
+        healthRetried = false;
         healthDays = 0;
         lastHistoryDay = null;
         requestPage(0);
@@ -414,9 +441,22 @@ public class WatchService extends Service {
         healthOffset = offset;
         if (offset == 0) healthSamples.clear();
         sendV3(IdoProtocol.V3_HEALTH, IdoProtocol.healthRequest(0, HEALTH_TYPES[healthIdx], healthToday, offset));
-        final int req = ++healthReq;
-        // move on if the watch never answers
-        h.postDelayed(() -> { if (healthReq == req && healthIdx >= 0) nextHealthStep(); }, 8000);
+        armHealthTimeout(++healthReq, 8000);
+    }
+
+    /** Move on if the watch never answers, but not while a reply is still arriving (the activity reply comes one
+     *  packet every 2-3.5 s, ~15 s for a whole day). */
+    private void armHealthTimeout(int req, long ms) {
+        h.postDelayed(() -> {
+            if (healthReq != req || healthIdx < 0) return;
+            if (v3want >= 0 && android.os.SystemClock.uptimeMillis() - v3LastPacket < 8000) armHealthTimeout(req, 2000);
+            else if (v3want >= 0 && !healthRetried) {   // the reply started but parts were lost: ask once more
+                Log.w(TAG, "health reply incomplete (" + v3buf.size() + " of " + v3want + " bytes), asking again");
+                v3want = -1;
+                healthRetried = true;
+                requestPage(healthOffset);
+            } else nextHealthStep();
+        }, ms);
     }
 
     /** After earlier days: today; after today: the next type. */
@@ -447,6 +487,7 @@ public class WatchService extends Service {
         int echoedOffset = (payload[3] & 0xff) | (payload[4] & 0xff) << 8;
         if (echoedOffset != healthOffset) return;      // stale/duplicate reply
         healthReq++;                                   // answered: cancels the timeout
+        healthRetried = false;
 
         if (type == IdoProtocol.HEALTH_TYPE_SLEEP) {
             saveRaw(healthToday ? "sleep" : "sleep-earlier", payload);
@@ -464,6 +505,20 @@ public class WatchService extends Service {
             }
             Log.i(TAG, "sleep " + (n == null ? "none" : n.total + " min on " + day + ", " + n.stages.length + " stages, score " + n.score));
             if (healthToday) nextHealthStep(); else finishEarlierDay(type, day);
+            return;
+        }
+        if (type == IdoProtocol.HEALTH_TYPE_SPORT) {
+            IdoProtocol.ActivityDay a = IdoProtocol.parseActivity(payload);
+            String day = a == null ? null : HealthDb.day(a.y, a.m, a.d);
+            Log.i(TAG, "activity " + (a == null ? "none" : day + ": " + a.steps + " steps, " + a.activeKcal + " kcal ("
+                    + a.totalKcal + " with resting), " + a.slotSteps.length + " slots"));
+            if (a != null && day.equals(HealthDb.today())) activeKcal = a.activeKcal;
+            String hex = IdoProtocol.hex(payload);
+            Runnable save = a == null ? null : () -> HealthDb.get(this).saveActivity(day, a, hex);
+            if (healthToday) {
+                if (save != null) HealthDb.run(save);
+                nextHealthStep();
+            } else finishEarlierDay(type, day, save);
             return;
         }
         IdoProtocol.HeartPage p = IdoProtocol.parseSeries(payload, type);
@@ -496,13 +551,17 @@ public class WatchService extends Service {
         nextHealthStep();
     }
 
-    private void finishEarlierDay(int type, String day) { finishEarlierDay(type, day, java.util.Collections.emptyList()); }
+    private void finishEarlierDay(int type, String day) { finishEarlierDay(type, day, (Runnable) null); }
+
+    private void finishEarlierDay(int type, String day, List<int[]> samples) {
+        finishEarlierDay(type, day, samples.isEmpty() ? null : () -> HealthDb.get(this).addSamples(type, day, samples));
+    }
 
     /**
      * An earlier day has arrived: save it, and once it is safely in the database confirm it so the watch moves on to
      * the next day. Stops when the watch has nothing more, repeats a day, or after 30 days.
      */
-    private void finishEarlierDay(int type, String day, List<int[]> samples) {
+    private void finishEarlierDay(int type, String day, Runnable save) {
         if (day == null || day.equals(lastHistoryDay) || day.compareTo(HealthDb.today()) >= 0 || ++healthDays > 30) {
             healthToday = true;
             requestPage(0);
@@ -513,7 +572,7 @@ public class WatchService extends Service {
         final int req = ++healthReq;   // holds the sync until the save is done
         HealthDb.run(() -> {
             try {
-                if (!samples.isEmpty()) HealthDb.get(this).addSamples(type, day, samples);
+                if (save != null) save.run();
             } catch (Exception e) {
                 Log.w(TAG, "could not save " + day, e);
                 h.post(() -> { if (healthReq == req && healthIdx == idx) { healthToday = true; requestPage(0); } });
@@ -546,7 +605,8 @@ public class WatchService extends Service {
         HealthDb.run(() -> {
             HealthDb db = HealthDb.get(this);
             android.content.ContentValues cv = new android.content.ContentValues();
-            cv.put("steps", st); cv.put("kcal", kc); cv.put("meters", m); cv.put("active", act);
+            // live data has calories including resting burn; activity calories come with the health sync
+            cv.put("steps", st); cv.put("kcal_total", kc); cv.put("meters", m); cv.put("active", act);
             db.setDay(day, cv);
             if (changed) db.addSample(HealthDb.STEPS, System.currentTimeMillis() / 1000 / 60 * 60, (int) st);
         });
@@ -592,7 +652,8 @@ public class WatchService extends Service {
                 if (pollCount % 15 == 7) queue.add(IdoProtocol.getDeviceInfo());   // battery for the history
                 pump();
                 if (pollCount % 30 == 29) Weather.update(WatchService.this);
-                if (pollCount++ % 5 == 0) requestHealth();
+                // every 5 minutes; the first sync runs 3 s after connecting, once the connect-time commands are out
+                if (pollCount++ % 5 == 4) requestHealth();
             }
             pump();                                   // also lets the watchdog run once a minute
             h.postDelayed(this, 60000);

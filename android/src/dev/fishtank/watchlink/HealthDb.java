@@ -18,14 +18,16 @@ import java.util.concurrent.Executors;
  * Everything the watch reports, kept on the phone so it can be looked at later (History screen, CSV export).
  * Stored in the app's private health.db; writes run on one background thread.
  *
- *   sample(kind, t, v)  one reading: kind = SPO2/STRESS/HR (the watch's health type numbers), STEPS (running
- *                       total for the day) or BATTERY; t = unix seconds; one row per kind and second.
- *   day(day, ...)       daily totals, day = "yyyy-MM-dd" in local time.
+ *   sample(kind, t, v)  one reading: kind = SPO2/STRESS/HR (the watch's health type numbers), SLOT_STEPS (steps
+ *                       in one of the watch's 15-minute slots, t = slot start), STEPS (running total for the day,
+ *                       saved while connected) or BATTERY; t = unix seconds; one row per kind and second.
+ *   day(day, ...)       daily totals, day = "yyyy-MM-dd" in local time. kcal = activity calories (what the watch
+ *                       shows), kcal_total = including resting burn.
  *   raw(day, kind, hex) the watch's latest reply per day and type, kept as sent: sleep (one night per day, see
  *                       nightDay()) is read back from here, so nothing is lost if more of the format is decoded later.
  */
 final class HealthDb extends SQLiteOpenHelper {
-    static final int SPO2 = 1, STRESS = 2, HR = 3, SLEEP = 7, STEPS = 101, BATTERY = 102;
+    static final int SPO2 = 1, STRESS = 2, HR = 3, SLEEP = 7, SLOT_STEPS = 8, STEPS = 101, BATTERY = 102;
 
     private static HealthDb instance;
     private static final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -35,18 +37,24 @@ final class HealthDb extends SQLiteOpenHelper {
         return instance;
     }
 
-    private HealthDb(Context c) { super(c, "health.db", null, 1); }
+    private HealthDb(Context c) { super(c, "health.db", null, 2); }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE sample (kind INTEGER NOT NULL, t INTEGER NOT NULL, v INTEGER NOT NULL,"
                 + " PRIMARY KEY (kind, t)) WITHOUT ROWID");
         db.execSQL("CREATE TABLE day (day TEXT PRIMARY KEY, steps INTEGER, kcal INTEGER, meters INTEGER,"
-                + " active INTEGER, sleep INTEGER, updated INTEGER)");
+                + " active INTEGER, sleep INTEGER, updated INTEGER, kcal_total INTEGER)");
         db.execSQL("CREATE TABLE raw (day TEXT NOT NULL, kind INTEGER NOT NULL, hex TEXT NOT NULL,"
                 + " saved INTEGER NOT NULL, PRIMARY KEY (day, kind)) WITHOUT ROWID");
     }
 
-    @Override public void onUpgrade(SQLiteDatabase db, int from, int to) {}
+    @Override public void onUpgrade(SQLiteDatabase db, int from, int to) {
+        if (from < 2) {
+            // version 1 kept the live-data calories (which include resting burn) as kcal: move them across
+            db.execSQL("ALTER TABLE day ADD COLUMN kcal_total INTEGER");
+            db.execSQL("UPDATE day SET kcal_total = kcal, kcal = NULL");
+        }
+    }
 
     /** Run work on the database thread. */
     static void run(Runnable r) { io.execute(r); }
@@ -132,6 +140,22 @@ final class HealthDb extends SQLiteOpenHelper {
         return true;
     }
 
+    /** Save a day of activity from the watch: totals, steps per slot and the reply as sent. */
+    void saveActivity(String day, IdoProtocol.ActivityDay a, String hex) {
+        ContentValues cv = new ContentValues();
+        cv.put("steps", a.steps);
+        cv.put("kcal", a.activeKcal);
+        cv.put("kcal_total", a.totalKcal);
+        cv.put("meters", a.meters);
+        cv.put("active", a.activeMin);
+        setDay(day, cv);
+        List<int[]> slots = new ArrayList<>();
+        for (int i = 0; i < a.slotSteps.length; i++)
+            if (a.slotSteps[i] > 0) slots.add(new int[]{(a.startMin + i * a.slotMin) * 60, a.slotSteps[i]});
+        addSamples(SLOT_STEPS, day, slots);
+        saveRaw(day, IdoProtocol.HEALTH_TYPE_SPORT, hex);
+    }
+
     void saveRaw(String day, int kind, String hex) {
         getWritableDatabase().execSQL("INSERT OR REPLACE INTO raw (day, kind, hex, saved) VALUES (?, ?, ?, ?)",
                 new Object[]{day, kind, hex, System.currentTimeMillis() / 1000});
@@ -163,13 +187,14 @@ final class HealthDb extends SQLiteOpenHelper {
         return hex == null ? null : IdoProtocol.parseSleep(IdoProtocol.unhex(hex));
     }
 
-    /** A day's totals, or null: {steps, kcal, meters, active, sleep}; -1 where unknown. */
+    /** A day's totals, or null: {steps, activity kcal, meters, active minutes, sleep minutes, kcal including
+     *  resting burn}; -1 where unknown. */
     long[] dayTotals(String day) {
         try (Cursor c = getReadableDatabase().rawQuery(
-                "SELECT steps, kcal, meters, active, sleep FROM day WHERE day = ?", new String[]{day})) {
+                "SELECT steps, kcal, meters, active, sleep, kcal_total FROM day WHERE day = ?", new String[]{day})) {
             if (!c.moveToFirst()) return null;
-            long[] r = new long[5];
-            for (int i = 0; i < 5; i++) r[i] = c.isNull(i) ? -1 : c.getLong(i);
+            long[] r = new long[6];
+            for (int i = 0; i < 6; i++) r[i] = c.isNull(i) ? -1 : c.getLong(i);
             return r;
         }
     }
@@ -207,11 +232,12 @@ final class HealthDb extends SQLiteOpenHelper {
                 sb.append(kindName(c.getInt(0))).append(',').append(f.format(new java.util.Date(c.getLong(1) * 1000)))
                         .append(',').append(c.getLong(2)).append('\n');
         }
-        sb.append("\nday,steps,kcal,meters,active_time,sleep_minutes\n");
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT day, steps, kcal, meters, active, sleep FROM day ORDER BY day", null)) {
+        sb.append("\nday,steps,activity_kcal,total_kcal,meters,active_minutes,sleep_minutes\n");
+        try (Cursor c = getReadableDatabase().rawQuery(
+                "SELECT day, steps, kcal, kcal_total, meters, active, sleep FROM day ORDER BY day", null)) {
             while (c.moveToNext()) {
                 sb.append(c.getString(0));
-                for (int i = 1; i < 6; i++) sb.append(',').append(c.isNull(i) ? "" : String.valueOf(c.getLong(i)));
+                for (int i = 1; i < 7; i++) sb.append(',').append(c.isNull(i) ? "" : String.valueOf(c.getLong(i)));
                 sb.append('\n');
             }
         }
@@ -261,6 +287,7 @@ final class HealthDb extends SQLiteOpenHelper {
             case STRESS: return "stress";
             case HR: return "heart_rate_bpm";
             case STEPS: return "steps_today";
+            case SLOT_STEPS: return "steps_in_15_min";
             case BATTERY: return "watch_battery_percent";
             default: return "type" + kind;
         }

@@ -252,7 +252,7 @@ public final class IdoProtocol {
     // Worked out and checked against a real reading on 2026-11-20.
     public static final int V3_HEALTH = 0x04, HEALTH_TYPE_HR = 3;
 
-    public static final int HEALTH_TYPE_SPO2 = 1, HEALTH_TYPE_STRESS = 2, HEALTH_TYPE_SLEEP = 7;
+    public static final int HEALTH_TYPE_SPO2 = 1, HEALTH_TYPE_STRESS = 2, HEALTH_TYPE_SLEEP = 7, HEALTH_TYPE_SPORT = 8;
 
     public static byte[] heartRateRequest(int offset) { return healthRequest(HEALTH_TYPE_HR, offset); }
 
@@ -366,6 +366,50 @@ public final class IdoProtocol {
         return n.total > 0 ? n : null;
     }
 
+    /**
+     * Daily activity ("sport", type 8; checked against the watch 2026-11-22). The head is ble_sync_v3_sport_head,
+     * 36 bytes: 0 version, 1 u16 year, month, day, 5 u16 start (minutes after midnight), 7 minutes per slot (15),
+     * 8 u32 steps, 12 u32 calories including resting burn (what live data 02 A0 reports), 16 u32 metres,
+     * 20 u32 active minutes, 24 u16 slot count, 26 u32 activity calories (what the watch shows), 30 walk goal.
+     * Slots are ble_v3_sync_sport_item, 10 bytes: mode, u16 steps, active minutes, u16 activity kcal, u16 metres,
+     * u16 kcal including resting burn. The slots add up exactly to the head's totals.
+     */
+    public static final class ActivityDay {
+        public int y, m, d, startMin, slotMin, steps, totalKcal, meters, activeMin, activeKcal;
+        public int[] slotSteps = new int[0], slotActiveKcal = new int[0], slotMeters = new int[0], slotKcal = new int[0];
+    }
+
+    /** A daily activity reply, or null when it holds no day. */
+    public static ActivityDay parseActivity(byte[] p) {
+        if (p.length < 14 || (p[1] & 0xff) != HEALTH_TYPE_SPORT) return null;
+        int headLen = (p[7] & 0xff) | (p[8] & 0xff) << 8;
+        int dataLen = (p[9] & 0xff) | (p[10] & 0xff) << 8;
+        int dataStart = p.length - dataLen, h = dataStart - headLen;
+        if (headLen < 31 || h < 11 || dataStart > p.length) return null;
+        ActivityDay a = new ActivityDay();
+        a.y = (p[h + 1] & 0xff) | (p[h + 2] & 0xff) << 8;
+        a.m = p[h + 3] & 0xff;
+        a.d = p[h + 4] & 0xff;
+        if (a.y < 2000 || a.m < 1 || a.m > 12 || a.d < 1 || a.d > 31) return null;
+        a.startMin = (p[h + 5] & 0xff) | (p[h + 6] & 0xff) << 8;
+        a.slotMin = p[h + 7] & 0xff;
+        a.steps = (int) u32(p, h + 8);
+        a.totalKcal = (int) u32(p, h + 12);
+        a.meters = (int) u32(p, h + 16);
+        a.activeMin = (int) u32(p, h + 20);
+        a.activeKcal = (int) u32(p, h + 26);
+        int n = dataLen / 10;
+        a.slotSteps = new int[n]; a.slotActiveKcal = new int[n]; a.slotMeters = new int[n]; a.slotKcal = new int[n];
+        for (int i = 0; i < n; i++) {
+            int o = dataStart + 10 * i;
+            a.slotSteps[i] = (p[o + 1] & 0xff) | (p[o + 2] & 0xff) << 8;
+            a.slotActiveKcal[i] = (p[o + 4] & 0xff) | (p[o + 5] & 0xff) << 8;
+            a.slotMeters[i] = (p[o + 6] & 0xff) | (p[o + 7] & 0xff) << 8;
+            a.slotKcal[i] = (p[o + 8] & 0xff) | (p[o + 9] & 0xff) << 8;
+        }
+        return a;
+    }
+
     /** Parsed heart-rate page: samples as {secondsAfterMidnight, bpm}; the date is 0 when the page had no data. */
     public static final class HeartPage {
         public int items, pageItems, year, month, day; public List<int[]> samples = new ArrayList<>();
@@ -413,7 +457,8 @@ public final class IdoProtocol {
         return packet(0x03, 0x44, new byte[]{(byte) (on ? 0xAA : 0x55), 0, 0, 23, 59, 0x55, 90});
     }
 
-    /** 03 53: run the vibration motor (key 0x53 in protocol_write_vbus_control): on/off + u16 milliseconds. */
+    /** 03 53: run the vibration motor (key 0x53 in protocol_write_vbus_control): on/off + u16 milliseconds.
+     *  The SW2S doesn't answer it (payload unknown), so Find watch uses notices instead; kept for testing. */
     public static byte[] vibrate(int ms) {
         return packet(0x03, 0x53, new byte[]{(byte) (ms > 0 ? 1 : 0), (byte) ms, (byte) (ms >> 8)});
     }

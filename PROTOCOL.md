@@ -21,7 +21,7 @@ The watch also has a classic Bluetooth side ("Momax SW2S BT", same address) for 
 | Packet | Meaning |
 |---|---|
 | `02 01` | device info. Reply: `02 01 <u16 id=0x1f42> <fw major> <fw minor> <mode> <battery %> …` |
-| `02 A0` | live data. Reply: `u32 steps, u32 kcal, u32 distance m, u32 active` from byte 2. Byte 18 is not heart rate on this watch. |
+| `02 A0` | live data. Reply: `u32 steps, u32 kcal, u32 distance m, u32 active` from byte 2. The kcal include resting burn (2,142 when the watch showed 527 activity kcal); activity calories come from health sync type 8. Byte 18 is not heart rate on this watch. |
 | `03 01` | set time: `u16 year, month, day, hour, min, sec, weekday (Mon=0)` |
 | `03 2D AA` | weather feature on (**required** for the weather screen to show data) |
 | `03 44` | all-day SpO2: `AA/55 on/off, start h, start m, end h, end m, AA/55 low alert, threshold` |
@@ -30,7 +30,7 @@ The watch also has a classic Bluetooth side ("Momax SW2S BT", same address) for 
 | `05 02 01` | call ended / answered: stop ringing |
 | `05 03` | message notification (old format). **Shows the firmware placeholder "IDO test" on this watch.** Use v3 `0x0B`. |
 | `06 01 00` | open the music screen |
-| `06 04 00` / `06 04 01` | find device start / stop (acknowledged, but doesn't vibrate the SW2S) |
+| `06 04 00` / `06 04 01` | find device start / stop (acknowledged, but doesn't vibrate the SW2S; `03 53` start motor gets no reply at all, so WatchLink's Find watch sends notices instead) |
 | `07 01 xx` (watch→phone) | music/camera buttons: `01` play (the SW2S sends `01` for every play/pause press), `02` pause, `04` previous, `05` next, `08`/`09` volume, `0C`/`0D` answer/reject call |
 | `07 02` (watch→phone) | find my phone |
 | `02 02` / `02 07` | function tables: which features the watch supports. Bit names are in the library's `protocol_func_table_*` structs (decoded list in `protocol_dump/sw2s_features.txt`, local only) |
@@ -108,6 +108,8 @@ stores them in its own database before confirming). Activity (`4`) and HRV (`16`
 * `data` items are `(u8 delta, u8 value)`. A value of 0 is filler (e.g. `ff 00` = 255-unit gap).
 * Heart rate: start time and deltas are in **seconds** after midnight.
 * Stress and SpO2: start time and deltas are in **minutes**.
+* Daily activity, type `8` ("sport"; in IDO terms "activity" = workouts, type 4, which is empty on the SW2S). Verified 2026-11-22: the head is `ble_sync_v3_sport_head`, 36 bytes: `version, u16 year, month, day, u16 start (minutes after midnight), minutes per slot (15), u32 steps, u32 kcal with resting burn, u32 metres, u32 active minutes, u16 slot count, u32 activity kcal (what the watch shows), walk goal, 5 bytes`. Slots are `ble_v3_sync_sport_item`, 10 bytes: `mode, u16 steps, active minutes, u16 activity kcal, u16 metres, u16 kcal with resting burn`; they add up exactly to the head's totals. `is_today=0` returned 20 and 21 Nov (96 slots each) after Momax Fit had stopped syncing. The watch sends this reply slowly, about one 180-byte packet every 2-3.5 s (~15 s for a whole day).
+* Big replies (the heart-rate day is ~5 KB) lose packets if the phone writes other commands while the reply is arriving, or sends a second health request before the first reply is complete. WatchLink holds its writes while a reply is arriving and asks once more if a reply comes in short.
 * Sleep (verified on a real night, 2026-11-22): the head is `protocol_v3_sleep_head`, 40 bytes:
 
   | Offset | Field |

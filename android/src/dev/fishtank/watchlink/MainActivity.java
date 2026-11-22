@@ -24,7 +24,7 @@ import java.util.Collections;
 /** Main screen: watch status, today's stats, and controls. Built in code (no XML). */
 public class MainActivity extends Activity {
     private static MainActivity current;
-    private TextView statusText, batteryText, firmwareText, stepsVal, kcalVal, distVal, hrVal, hrSub, pairRow, weatherRow, stressVal, stressSub, spo2Val, spo2Sub, sleepVal, sleepSub, findBtn;
+    private TextView statusText, batteryText, firmwareText, stepsVal, kcalVal, kcalSub, distVal, hrVal, hrSub, pairRow, weatherRow, stressVal, stressSub, spo2Val, spo2Sub, sleepVal, sleepSub, findBtn;
     private View statusDot;
     private boolean finding;
     private final Handler h = new Handler(Looper.getMainLooper());
@@ -81,6 +81,7 @@ public class MainActivity extends Activity {
         LinearLayout grid1 = new LinearLayout(this), grid2 = new LinearLayout(this);
         stepsVal = stat(grid1, "Steps");
         kcalVal = stat(grid1, "Calories");
+        kcalSub = sub(kcalVal);
         distVal = stat(grid2, "Distance");
         hrVal = stat(grid2, "Heart rate");
         hrSub = Ui.label(this, "", 12, false, Ui.subtext(this));
@@ -247,7 +248,7 @@ public class MainActivity extends Activity {
         tile.addView(Ui.label(this, name, 13, false, Ui.subtext(this)));
         TextView v = Ui.label(this, "–", 26, true, Ui.text(this));
         tile.addView(v);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1);   // tiles in a row share its height
         lp.setMargins(row.getChildCount() == 0 ? 0 : Ui.dp(this, 7), 0,
                 row.getChildCount() == 0 ? Ui.dp(this, 7) : 0, Ui.dp(this, 14));
         row.addView(tile, lp);
@@ -255,8 +256,9 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Find watch: the official "find device" command (06 04 00/01) is acknowledged by the SW2S but didn't buzz it,
-     * so we also pulse the vibration motor (03 53) every 2.5 s until stopped (or 20 s).
+     * Find watch: the official "find device" command (06 04 00/01) is acknowledged by the SW2S but doesn't buzz it,
+     * and the motor command (03 53) gets no answer at all. A notification always buzzes the watch and lights the
+     * screen, so send one every 5 s until stopped (at most 4, ~20 s).
      */
     private void toggleFind() {
         finding = !finding;
@@ -266,7 +268,7 @@ public class MainActivity extends Activity {
             pulse(0);
         } else {
             h.removeCallbacks(pulser);
-            WatchService.send(Arrays.asList(IdoProtocol.findWatch(false), IdoProtocol.vibrate(0)));
+            WatchService.send(Collections.singletonList(IdoProtocol.findWatch(false)));
         }
     }
 
@@ -276,9 +278,9 @@ public class MainActivity extends Activity {
     private void pulse(int n) {
         pulses = n;
         if (!finding) return;
-        if (n >= 8) { toggleFind(); return; }            // stop after ~20 s
-        WatchService.send(Collections.singletonList(IdoProtocol.vibrate(2000)));
-        h.postDelayed(pulser, 2500);
+        if (n >= 4) { toggleFind(); return; }            // stop after ~20 s
+        WatchService.sendV3(IdoProtocol.V3_NOTICE, IdoProtocol.noticeV3(0x01, "Find watch", "", "Your phone is looking for this watch"));
+        h.postDelayed(pulser, 5000);
     }
 
     /** Android 14 refuses to start a connected-device service before BLUETOOTH_CONNECT is granted. */
@@ -311,24 +313,27 @@ public class MainActivity extends Activity {
 
         if (WatchService.steps >= 0) {
             stepsVal.setText(String.format("%,d", WatchService.steps));
-            kcalVal.setText(WatchService.kcal + " kcal");
+            // the watch shows activity calories (from the health sync); live data only has the total with resting burn
+            int active = WatchService.activeKcal;
+            kcalVal.setText((active >= 0 ? active : WatchService.kcal) + " kcal");
+            kcalSub.setText(active >= 0 ? String.format("active · %,d in total", WatchService.kcal) : "in total, with resting");
             long m = WatchService.distance;
             distVal.setText(m >= 1000 ? String.format("%.2f km", m / 1000.0) : m + " m");
         }
         if (WatchService.hrTime >= 0) {
             int t = WatchService.hrTime;
             hrVal.setText(WatchService.heartRate + " bpm");
-            hrSub.setText("at " + clock(t) + " · today " + WatchService.hrMin + "–" + WatchService.hrMax);
+            hrSub.setText("at " + clock(t) + "\ntoday " + WatchService.hrMin + "–" + WatchService.hrMax);
         }
         WatchService.Series st = WatchService.stress, ox = WatchService.spo2;
         if (st.time >= 0) {
             stressVal.setText(String.valueOf(st.value));
             stressSub.setText((st.value < 40 ? "Relaxed" : st.value < 60 ? "Normal" : st.value < 80 ? "Medium" : "High")
-                    + " · at " + clock(st.time));
+                    + "\nat " + clock(st.time));
         } else stressSub.setText("No reading today");
         if (ox.time >= 0) {
             spo2Val.setText(ox.value + "%");
-            spo2Sub.setText("at " + clock(ox.time) + " · today " + ox.min + "–" + ox.max + "%");
+            spo2Sub.setText("at " + clock(ox.time) + "\ntoday " + ox.min + "–" + ox.max + "%");
         } else spo2Sub.setText("No reading today");
         boolean paired = classicPaired();
         Ui.setRow(this, pairRow, "Calls & music", paired ? "Paired: call audio and music buttons work"

@@ -61,6 +61,7 @@ final class ChartView extends View {
         if (values.length == 0 || fixedRange) { lo = floor; hi = ceil; }
         float pad = fixedRange ? 0 : Math.max(2, (hi - lo) * 0.12f);
         range(Math.max(floor, lo - pad), Math.min(ceil, hi + pad), floor, ceil);
+        requestLayout();
         invalidate();
     }
 
@@ -109,6 +110,7 @@ final class ChartView extends View {
         for (float v : values) hi = Math.max(hi, v);
         yMin = 0;
         yMax = hi <= 0 ? 1 : niceCeil(hi * 1.1f);
+        requestLayout();
         invalidate();
     }
 
@@ -116,12 +118,17 @@ final class ChartView extends View {
 
     private static float niceCeil(float v) {
         double p = Math.pow(10, Math.floor(Math.log10(v)));
-        for (double m : new double[]{1, 2, 2.5, 5, 10}) if (m * p >= v) return (float) (m * p);
+        for (double m : new double[]{1, 2, 3, 4, 6, 8, 10}) if (m * p >= v) return (float) (m * p);   // round middle line
         return (float) (10 * p);
     }
 
+    private boolean hasData() {
+        for (float v : ys) if (v > 0 || mode != BARS) return true;
+        return false;
+    }
+
     @Override protected void onMeasure(int w, int h) {
-        setMeasuredDimension(MeasureSpec.getSize(w), Math.round(150 * dp));
+        setMeasuredDimension(MeasureSpec.getSize(w), Math.round((hasData() ? 150 : 48) * dp));
     }
 
     private String fmt(float v) {
@@ -141,6 +148,11 @@ final class ChartView extends View {
         float left = 4 * dp, right = getWidth() - 4 * dp, top = 8 * dp, bottom = getHeight() - 20 * dp;
         float labelW = text.measureText("0000") + 6 * dp;
         float plotL = left + labelW, plotR = right;
+        if (!hasData()) {   // nothing to show: just the message, no made-up axis
+            text.setTextAlign(Paint.Align.CENTER);
+            c.drawText(empty, getWidth() / 2f, getHeight() / 2f + text.getTextSize() * 0.35f, text);
+            return;
+        }
         // grid with values
         text.setTextAlign(Paint.Align.LEFT);
         for (int i = 0; i <= 2; i++) {
@@ -159,13 +171,6 @@ final class ChartView extends View {
                 else text.setTextAlign(Paint.Align.CENTER);
             }
             c.drawText(xLabels[i], x, getHeight() - 5 * dp, text);
-        }
-        boolean any = false;
-        for (float v : ys) if (v > 0 || mode != BARS) { any = true; break; }
-        if (ys.length == 0 || !any) {
-            text.setTextAlign(Paint.Align.CENTER);
-            c.drawText(empty, (plotL + plotR) / 2, (top + bottom) / 2, text);
-            return;
         }
         ink.setColor(color);
         fill.setColor(color);

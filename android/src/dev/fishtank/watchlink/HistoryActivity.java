@@ -187,7 +187,7 @@ public class HistoryActivity extends Activity {
     /** Everything one screen needs, read on the database thread. */
     private static final class Data {
         String day, firstDay;
-        List<long[]> hr, stress, spo2, steps, batt;
+        List<long[]> hr, stress, spo2, steps, slots, batt;
         long[] totals;
         long[] weekSteps = new long[7];
         float[] weekHr = new float[7], weekSleep = new float[7];
@@ -208,6 +208,7 @@ public class HistoryActivity extends Activity {
             x.stress = db.samples(HealthDb.STRESS, start, end);
             x.spo2 = db.samples(HealthDb.SPO2, start, end);
             x.steps = db.samples(HealthDb.STEPS, start, end);
+            x.slots = db.samples(HealthDb.SLOT_STEPS, start, end);
             x.batt = db.samples(HealthDb.BATTERY, start, end);
             x.totals = db.dayTotals(d);
             x.firstDay = db.firstDay();
@@ -269,6 +270,7 @@ public class HistoryActivity extends Activity {
             stepsVal.setText(String.format(Locale.getDefault(), "%,d steps", t[0]));
             List<String> parts = new ArrayList<>();
             if (t[1] >= 0) parts.add(t[1] + " kcal");
+            else if (t[5] >= 0) parts.add(t[5] + " kcal in total");
             if (t[2] >= 0) parts.add(t[2] >= 1000 ? String.format(Locale.getDefault(), "%.2f km", t[2] / 1000.0) : t[2] + " m");
             int goal = getSharedPreferences(WatchService.PREFS, 0).getInt("goal.steps", 8000);
             if (goal > 0) parts.add(Math.round(100f * t[0] / goal) + "% of " + String.format(Locale.getDefault(), "%,d", goal));
@@ -277,18 +279,25 @@ public class HistoryActivity extends Activity {
             stepsVal.setText("–");
             stepsSub.setText("No steps saved for this day");
         }
+        // steps per hour: from the watch's own 15-minute slots, or else from the running count saved while connected
         float[] perHour = new float[24];
-        long prevTotal = 0;
-        for (long[] s : x.steps) {
-            int hr = (int) Math.min(23, Math.max(0, (s[0] - start) / 3600));
-            long diff = s[1] >= prevTotal ? s[1] - prevTotal : s[1];   // the count restarts at midnight
-            perHour[hr] += diff;
-            prevTotal = s[1];
+        if (!x.slots.isEmpty()) {
+            for (long[] s : x.slots) perHour[(int) Math.min(23, Math.max(0, (s[0] - start) / 3600))] += s[1];
+        } else {
+            long prevTotal = 0;
+            for (long[] s : x.steps) {
+                int hr = (int) Math.min(23, Math.max(0, (s[0] - start) / 3600));
+                long diff = s[1] >= prevTotal ? s[1] - prevTotal : s[1];   // the count restarts at midnight
+                perHour[hr] += diff;
+                prevTotal = s[1];
+            }
         }
+        boolean h24 = android.text.format.DateFormat.is24HourFormat(this);
         String[] hl = new String[24];
-        for (int i = 0; i < 24; i++) hl[i] = i % 6 == 0 ? i + ":00" : "";
+        for (int i = 0; i < 24; i++)
+            hl[i] = i % 6 != 0 ? "" : h24 ? i + ":00" : ((i + 11) % 12 + 1) + (i < 12 ? " am" : " pm");
         stepsChart.bars(hl, perHour, Ui.ACCENT, -1, -1);
-        stepsChart.setEmptyText("Steps per hour show up while the phone is connected");
+        stepsChart.setEmptyText("No steps for this day");
 
         // heart rate
         if (!x.hr.isEmpty()) {
@@ -337,7 +346,7 @@ public class HistoryActivity extends Activity {
                 stageVal[i].setText(duration(m));
                 stagePct[i].setText(sum > 0 ? Math.round(100f * m / sum) + "%" : "");
             }
-            sleepHr.setText("Heart rate while asleep: " + x.sleepHrAvg + " bpm on average, lowest " + x.sleepHrLow);
+            sleepHr.setText("Heart rate asleep: " + x.sleepHrAvg + " bpm average, lowest " + x.sleepHrLow);
         } else { sleepVal.setText("–"); sleepSub.setText("No sleep saved for this day. Wear the watch to bed."); }
 
         // last 7 days
@@ -358,9 +367,11 @@ public class HistoryActivity extends Activity {
             battSub.setText("Last " + last[1] + "% at " + clock(last[0]));
         } else battSub.setText("Saved every half hour while connected");
         battChart.fixed().day(ChartView.LINE, hours(x.batt, start), values(x.batt), Ui.GOOD, 0, 100, 2);
+        battChart.setEmptyText("No battery readings for this day");
 
         footer.setText(String.format(Locale.getDefault(), "Saved so far: %,d heart rate, %,d stress and %,d blood oxygen readings%s.",
-                x.hrCount, x.stressCount, x.spo2Count, firstDay == null ? "" : ", from " + firstDay));
+                x.hrCount, x.stressCount, x.spo2Count, firstDay == null ? "" : ", since " + new SimpleDateFormat("EEE d MMM",
+                        Locale.getDefault()).format(new java.util.Date(HealthDb.midnight(firstDay) * 1000))));
     }
 
     private static String duration(int mins) { return mins >= 60 ? mins / 60 + "h " + mins % 60 + "m" : mins + "m"; }

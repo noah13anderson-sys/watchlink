@@ -29,7 +29,7 @@ import java.util.Set;
 public class AppsActivity extends Activity {
     private SharedPreferences p;
     private LinearLayout known, others;
-    private TextView knownTitle, othersTitle;
+    private TextView knownTitle, othersTitle, noMatch;
     private final List<View> rows = new ArrayList<>();
     private final List<String> labels = new ArrayList<>();
 
@@ -69,10 +69,16 @@ public class AppsActivity extends Activity {
 
         knownTitle = Ui.section(this, root, "Apps with their own icon");
         known = Ui.card(this, root);
+        knownTitle.setVisibility(View.GONE);   // shown once the apps have loaded
+        known.setVisibility(View.GONE);
         othersTitle = Ui.section(this, root, "Other apps");
         others = Ui.card(this, root);
         TextView loading = Ui.label(this, "Loading apps…", 15, false, Ui.subtext(this));
         others.addView(loading);
+        noMatch = Ui.label(this, "No apps match", 15, false, Ui.subtext(this));
+        noMatch.setPadding(Ui.dp(this, 4), Ui.dp(this, 12), 0, 0);
+        noMatch.setVisibility(View.GONE);
+        root.addView(noMatch);
 
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Ui.bg(this));
@@ -137,17 +143,25 @@ public class AppsActivity extends Activity {
         return row;
     }
 
-    /** Show only apps whose name contains the search text (dividers follow their rows). */
+    /** Show only apps whose name contains the search text (dividers follow their rows); sections with no match hide. */
     private void filter(String q) {
         String s = q.trim().toLowerCase(Locale.ROOT);
+        int knownShown = 0, othersShown = 0;
         for (int i = 0; i < rows.size(); i++) {
             View row = rows.get(i);
             boolean show = s.isEmpty() || labels.get(i).contains(s);
             row.setVisibility(show ? View.VISIBLE : View.GONE);
             LinearLayout card = (LinearLayout) row.getParent();
+            if (show) { if (card == known) knownShown++; else othersShown++; }
             int at = card.indexOfChild(row);
             if (at > 0) card.getChildAt(at - 1).setVisibility(s.isEmpty() ? View.VISIBLE : View.GONE);   // no dividers while searching
         }
+        int k = knownShown > 0 ? View.VISIBLE : View.GONE, o = othersShown > 0 ? View.VISIBLE : View.GONE;
+        knownTitle.setVisibility(k);
+        known.setVisibility(k);
+        othersTitle.setVisibility(o);
+        others.setVisibility(o);
+        noMatch.setVisibility(knownShown + othersShown == 0 && !rows.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
     private void tint(Switch sw) {
