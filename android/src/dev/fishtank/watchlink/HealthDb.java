@@ -21,7 +21,8 @@ import java.util.concurrent.Executors;
  *   sample(kind, t, v)  one reading: kind = SPO2/STRESS/HR (the watch's health type numbers), STEPS (running
  *                       total for the day) or BATTERY; t = unix seconds; one row per kind and second.
  *   day(day, ...)       daily totals, day = "yyyy-MM-dd" in local time.
- *   raw(day, kind, hex) the last non-empty reply per day and type, for formats that aren't decoded yet (sleep stages).
+ *   raw(day, kind, hex) the watch's latest reply per day and type, kept as sent: sleep (one night per day, see
+ *                       nightDay()) is read back from here, so nothing is lost if more of the format is decoded later.
  */
 final class HealthDb extends SQLiteOpenHelper {
     static final int SPO2 = 1, STRESS = 2, HR = 3, SLEEP = 7, STEPS = 101, BATTERY = 102;
@@ -108,6 +109,29 @@ final class HealthDb extends SQLiteOpenHelper {
         db.update("day", cv, "day = ?", new String[]{day});
     }
 
+    /** The day a night belongs to: the date six hours after falling asleep. A night that starts in the evening
+     *  counts for the morning it ends, and the day doesn't change while the watch keeps adding to the night. */
+    static String nightDay(IdoProtocol.SleepNight n) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeInMillis((n.start() + 6 * 3600) * 1000);
+        return day(c);
+    }
+
+    /**
+     * Save a night (the watch's reply as sent) and its total. A day keeps one night: a later reply replaces it,
+     * unless it is a different, shorter sleep (a nap after the night). Returns false when it was not kept.
+     */
+    boolean saveNight(IdoProtocol.SleepNight n, String hex) {
+        String day = nightDay(n);
+        IdoProtocol.SleepNight old = night(day);
+        if (old != null && Math.abs(old.start() - n.start()) > 90 * 60 && old.total > n.total) return false;
+        saveRaw(day, SLEEP, hex);
+        ContentValues cv = new ContentValues();
+        cv.put("sleep", n.total);
+        setDay(day, cv);
+        return true;
+    }
+
     void saveRaw(String day, int kind, String hex) {
         getWritableDatabase().execSQL("INSERT OR REPLACE INTO raw (day, kind, hex, saved) VALUES (?, ?, ?, ?)",
                 new Object[]{day, kind, hex, System.currentTimeMillis() / 1000});
@@ -123,6 +147,20 @@ final class HealthDb extends SQLiteOpenHelper {
             while (c.moveToNext()) out.add(new long[]{c.getLong(0), c.getLong(1)});
         }
         return out;
+    }
+
+    /** The watch's saved reply for a day and type, or null. */
+    String raw(String day, int kind) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT hex FROM raw WHERE day = ? AND kind = ?",
+                new String[]{day, String.valueOf(kind)})) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    /** The night that belongs to a day (see nightDay()), or null. */
+    IdoProtocol.SleepNight night(String day) {
+        String hex = raw(day, SLEEP);
+        return hex == null ? null : IdoProtocol.parseSleep(IdoProtocol.unhex(hex));
     }
 
     /** A day's totals, or null: {steps, kcal, meters, active, sleep}; -1 where unknown. */
@@ -160,7 +198,7 @@ final class HealthDb extends SQLiteOpenHelper {
         }
     }
 
-    /** Everything as CSV: one section of readings, one of daily totals. */
+    /** Everything as CSV: sections for readings, daily totals, nights and sleep stages. */
     String csv() {
         StringBuilder sb = new StringBuilder("type,time,value\n");
         java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
@@ -177,7 +215,44 @@ final class HealthDb extends SQLiteOpenHelper {
                 sb.append('\n');
             }
         }
+        List<IdoProtocol.SleepNight> nights = new ArrayList<>();
+        List<String> nightDays = new ArrayList<>();
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT day, hex FROM raw WHERE kind = ? ORDER BY day",
+                new String[]{String.valueOf(SLEEP)})) {
+            while (c.moveToNext()) {
+                IdoProtocol.SleepNight n = IdoProtocol.parseSleep(IdoProtocol.unhex(c.getString(1)));
+                if (n != null) { nights.add(n); nightDays.add(c.getString(0)); }
+            }
+        }
+        java.text.SimpleDateFormat m = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT);
+        sb.append("\nnight,fell_asleep,woke_up,sleep_minutes,awake_minutes,light_minutes,rem_minutes,deep_minutes,sleep_score\n");
+        for (int i = 0; i < nights.size(); i++) {
+            IdoProtocol.SleepNight n = nights.get(i);
+            sb.append(nightDays.get(i)).append(',').append(m.format(new java.util.Date(n.start() * 1000)))
+                    .append(',').append(m.format(new java.util.Date(n.end() * 1000))).append(',').append(n.total)
+                    .append(',').append(n.awake).append(',').append(n.light).append(',').append(n.rem)
+                    .append(',').append(n.deep).append(',').append(n.score < 0 ? "" : String.valueOf(n.score)).append('\n');
+        }
+        sb.append("\nsleep_stage_start,stage,minutes\n");
+        for (IdoProtocol.SleepNight n : nights) {
+            long t = n.start();
+            for (int i = 0; i < n.stages.length; i++) {
+                sb.append(m.format(new java.util.Date(t * 1000))).append(',').append(stageName(n.stages[i]))
+                        .append(',').append(n.minutes[i]).append('\n');
+                t += n.minutes[i] * 60L;
+            }
+        }
         return sb.toString();
+    }
+
+    static String stageName(int stage) {
+        switch (stage) {
+            case IdoProtocol.SleepNight.AWAKE: return "awake";
+            case IdoProtocol.SleepNight.LIGHT: return "light";
+            case IdoProtocol.SleepNight.DEEP: return "deep";
+            case IdoProtocol.SleepNight.REM: return "rem";
+            default: return "stage" + stage;
+        }
     }
 
     static String kindName(int kind) {

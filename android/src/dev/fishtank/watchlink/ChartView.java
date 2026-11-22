@@ -10,6 +10,8 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import android.view.View;
 
+import java.util.Locale;
+
 /**
  * Small charts for the History screen: readings across a day (line or dots, x = hours 0..24) or one bar per slot
  * (hours of a day, or days). Drawn in code to match the rest of the app.
@@ -50,7 +52,9 @@ final class ChartView extends View {
     void day(int mode, float[] hours, float[] values, int color, float floor, float ceil, float maxGapHours) {
         this.mode = mode; this.xs = hours; this.ys = values; this.color = color;
         xMin = 0; xMax = 24; maxGap = maxGapHours; goal = -1; highlight = -1;
-        xLabels = new String[]{"0:00", "6:00", "12:00", "18:00", "24:00"};
+        xLabels = android.text.format.DateFormat.is24HourFormat(getContext())
+                ? new String[]{"0:00", "6:00", "12:00", "18:00", "24:00"}
+                : new String[]{"12 am", "6 am", "12 pm", "6 pm", "12 am"};
         xLabelAt = new float[]{0, 6, 12, 18, 24};
         float lo = Float.MAX_VALUE, hi = -Float.MAX_VALUE;
         for (float v : values) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
@@ -85,7 +89,10 @@ final class ChartView extends View {
         invalidate();
     }
 
-    private boolean showValues;
+    private boolean showValues, hours;
+
+    /** Values are hours (sleep): the axis shows "8h", bars "7h32". */
+    ChartView hours() { hours = true; return this; }
 
     /** One bar per slot with a label under each (labels may be blank). */
     void bars(String[] labels, float[] values, int color, float goal, int highlight) {
@@ -118,9 +125,16 @@ final class ChartView extends View {
     }
 
     private String fmt(float v) {
+        if (hours) return v == Math.floor(v) ? (int) v + "h" : String.format(Locale.ROOT, "%.1fh", v);
         if (Math.abs(v) >= 10000) return Math.round(v / 1000) + "k";
         if (Math.abs(v) >= 1000) return String.format("%.1fk", v / 1000).replace(".0k", "k");
         return String.valueOf(Math.round(v));
+    }
+
+    private String barLabel(float v) {
+        if (!hours) return fmt(v);
+        int m = Math.round(v * 60);
+        return m % 60 == 0 ? m / 60 + "h" : String.format(Locale.ROOT, "%dh%02d", m / 60, m % 60);
     }
 
     @Override protected void onDraw(Canvas c) {
@@ -167,7 +181,7 @@ final class ChartView extends View {
                 c.drawPath(p, fill);
                 if (showValues) {
                     text.setTextAlign(Paint.Align.CENTER);
-                    c.drawText(fmt(ys[i]), x, Math.max(top + text.getTextSize(), y - 4 * dp), text);
+                    c.drawText(barLabel(ys[i]), x, Math.max(top + text.getTextSize(), y - 4 * dp), text);
                 }
             }
             if (goal > 0) {

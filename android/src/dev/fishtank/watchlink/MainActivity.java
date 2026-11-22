@@ -229,7 +229,14 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    private static String clock(int secs) { return String.format("%d:%02d", secs / 3600, (secs / 60) % 60); }
+    /** Seconds after midnight as a clock time, in the phone's 12/24-hour style. */
+    private String clock(int secs) { return AlarmsActivity.show(this, secs / 3600 % 24, (secs / 60) % 60); }
+
+    private String clockAt(long unix) {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.setTimeInMillis(unix * 1000);
+        return AlarmsActivity.show(this, c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
+    }
 
     /** One stat tile in a 2-column grid. */
     private TextView stat(LinearLayout row, String name) {
@@ -311,8 +318,7 @@ public class MainActivity extends Activity {
         if (WatchService.hrTime >= 0) {
             int t = WatchService.hrTime;
             hrVal.setText(WatchService.heartRate + " bpm");
-            hrSub.setText(String.format("at %d:%02d · today %d–%d", t / 3600, (t / 60) % 60,
-                    WatchService.hrMin, WatchService.hrMax));
+            hrSub.setText("at " + clock(t) + " · today " + WatchService.hrMin + "–" + WatchService.hrMax);
         }
         WatchService.Series st = WatchService.stress, ox = WatchService.spo2;
         if (st.time >= 0) {
@@ -329,9 +335,12 @@ public class MainActivity extends Activity {
                 : "Not paired: tap to pair for call audio and music buttons");
         Ui.setRow(this, weatherRow, "Weather", Weather.summary.isEmpty()
                 ? "Sends the forecast to the watch · tap to update" : Weather.summary + " · tap to update");
-        int sl = WatchService.sleepMins;
-        if (sl > 0) { sleepVal.setText(sl / 60 + "h " + sl % 60 + "m"); sleepSub.setText(""); }
-        else sleepSub.setText("Wear the watch to bed");
+        IdoProtocol.SleepNight night = WatchService.lastNight;
+        if (night != null) {
+            sleepVal.setText(night.total / 60 + "h " + night.total % 60 + "m");
+            String range = clockAt(night.start()) + " – " + clockAt(night.end());
+            sleepSub.setText(night.score > 0 ? "Score " + night.score + " · " + range : range);
+        } else { sleepVal.setText("–"); sleepSub.setText("Wear the watch to bed"); }
     }
 
     @Override protected void onResume() {

@@ -26,8 +26,11 @@ public class HistoryActivity extends Activity {
     private String day = HealthDb.today();
     private String firstDay;
     private TextView dayLabel, prev, next, stepsVal, stepsSub, hrVal, hrSub, stressVal, stressSub, spo2Val, spo2Sub,
-            sleepVal, sleepSub, weekSub, battSub, footer;
-    private ChartView stepsChart, hrChart, stressChart, spo2Chart, weekChart, hrWeekChart, battChart;
+            sleepVal, sleepSub, sleepHr, weekSub, battSub, footer;
+    private ChartView stepsChart, hrChart, stressChart, spo2Chart, weekChart, hrWeekChart, sleepWeekChart, battChart;
+    private SleepView sleepChart;
+    private LinearLayout sleepStages;
+    private final TextView[] stageVal = new TextView[4], stagePct = new TextView[4];
 
     /** Called when new health data has been saved. */
     static void refresh() {
@@ -75,6 +78,27 @@ public class HistoryActivity extends Activity {
         spo2Chart = chart(c);
         c = card(root, "Sleep");
         sleepVal = big(c); sleepSub = small(c);
+        sleepChart = new SleepView(this);
+        c.addView(sleepChart, new LinearLayout.LayoutParams(-1, -2));
+        sleepStages = new LinearLayout(this);
+        sleepStages.setPadding(0, Ui.dp(this, 12), 0, 0);
+        for (int i = 0; i < 4; i++) {
+            LinearLayout col = Ui.column(this);
+            android.text.SpannableString name = new android.text.SpannableString("●  " + SleepView.ROW_NAME[i]);
+            name.setSpan(new android.text.style.ForegroundColorSpan(SleepView.ROW_COLOR[i]), 0, 1, 0);
+            TextView n = Ui.label(this, "", 12, false, Ui.subtext(this));
+            n.setText(name);
+            col.addView(n);
+            stageVal[i] = Ui.label(this, "", 15, true, Ui.text(this));
+            col.addView(stageVal[i]);
+            stagePct[i] = Ui.label(this, "", 12, false, Ui.subtext(this));
+            col.addView(stagePct[i]);
+            sleepStages.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
+        }
+        c.addView(sleepStages);
+        sleepHr = Ui.label(this, "", 13, false, Ui.subtext(this));
+        sleepHr.setPadding(0, Ui.dp(this, 12), 0, 0);
+        c.addView(sleepHr);
         c = card(root, "Last 7 days");
         weekSub = small(c);
         weekChart = chart(c);
@@ -82,6 +106,10 @@ public class HistoryActivity extends Activity {
         hrw.setPadding(0, Ui.dp(this, 12), 0, 0);
         c.addView(hrw);
         hrWeekChart = chart(c);
+        TextView slw = Ui.label(this, "Sleep", 13, false, Ui.subtext(this));
+        slw.setPadding(0, Ui.dp(this, 12), 0, 0);
+        c.addView(slw);
+        sleepWeekChart = chart(c).hours();
         c = card(root, "Watch battery");
         battSub = small(c);
         battChart = chart(c);
@@ -162,7 +190,9 @@ public class HistoryActivity extends Activity {
         List<long[]> hr, stress, spo2, steps, batt;
         long[] totals;
         long[] weekSteps = new long[7];
-        float[] weekHr = new float[7];
+        float[] weekHr = new float[7], weekSleep = new float[7];
+        IdoProtocol.SleepNight night;
+        long sleepHrAvg = -1, sleepHrLow = -1;
         String[] weekNames = new String[7];
         int hrCount, stressCount, spo2Count;
     }
@@ -181,11 +211,19 @@ public class HistoryActivity extends Activity {
             x.batt = db.samples(HealthDb.BATTERY, start, end);
             x.totals = db.dayTotals(d);
             x.firstDay = db.firstDay();
+            x.night = db.night(d);
+            if (x.night != null) {
+                List<long[]> h = db.samples(HealthDb.HR, x.night.start(), x.night.end() + 60);
+                long sum = 0, lo = 999;
+                for (long[] s : h) { sum += s[1]; lo = Math.min(lo, s[1]); }
+                if (!h.isEmpty()) { x.sleepHrAvg = Math.round((double) sum / h.size()); x.sleepHrLow = lo; }
+            }
             SimpleDateFormat wd = new SimpleDateFormat("EEE", Locale.getDefault());
             for (int i = 0; i < 7; i++) {
                 String dd = HealthDb.shift(d, i - 6);
                 long[] t = db.dayTotals(dd);
                 x.weekSteps[i] = t == null ? 0 : Math.max(0, t[0]);
+                x.weekSleep[i] = t == null ? 0 : Math.max(0, t[4]) / 60f;
                 List<long[]> h = db.samples(HealthDb.HR, HealthDb.midnight(dd), HealthDb.midnight(HealthDb.shift(dd, 1)));
                 long sum = 0;
                 for (long[] s : h) sum += s[1];
@@ -211,11 +249,7 @@ public class HistoryActivity extends Activity {
         return r;
     }
 
-    private static String clock(long t) {
-        Calendar c = Calendar.getInstance();
-        c.setTimeInMillis(t * 1000);
-        return String.format(Locale.ROOT, "%d:%02d", c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE));
-    }
+    private String clock(long t) { return time(t); }
 
     private void show(Data x) {
         if (!x.day.equals(day)) return;
@@ -285,10 +319,25 @@ public class HistoryActivity extends Activity {
         } else { spo2Val.setText("–"); spo2Sub.setText("No blood oxygen readings for this day"); }
         spo2Chart.day(ChartView.DOTS, hours(x.spo2, start), values(x.spo2), 0xFF8AB4F8, 80, 100, 1);
 
-        // sleep (night ending on this day)
-        if (t != null && t[4] > 0) {
-            sleepVal.setText(t[4] / 60 + "h " + t[4] % 60 + "m");
-            sleepSub.setText("Night ending on this day (the watch's total; stages aren't decoded yet)");
+        // sleep: the night that ended on this day
+        IdoProtocol.SleepNight n = x.night;
+        int vis = n == null ? android.view.View.GONE : android.view.View.VISIBLE;
+        sleepChart.setVisibility(vis);
+        sleepStages.setVisibility(vis);
+        sleepHr.setVisibility(n == null || x.sleepHrAvg < 0 ? android.view.View.GONE : android.view.View.VISIBLE);
+        if (n != null) {
+            sleepVal.setText(duration(n.total));
+            String range = time(n.start()) + " – " + time(n.end());
+            sleepSub.setText(n.score > 0 ? range + " · sleep score " + n.score : range);
+            sleepChart.set(n);
+            int sum = 0;
+            for (int m : n.minutes) sum += m;
+            for (int i = 0; i < 4; i++) {
+                int m = n.minutesIn(SleepView.ROW_STAGE[i]);
+                stageVal[i].setText(duration(m));
+                stagePct[i].setText(sum > 0 ? Math.round(100f * m / sum) + "%" : "");
+            }
+            sleepHr.setText("Heart rate while asleep: " + x.sleepHrAvg + " bpm on average, lowest " + x.sleepHrLow);
         } else { sleepVal.setText("–"); sleepSub.setText("No sleep saved for this day. Wear the watch to bed."); }
 
         // last 7 days
@@ -300,6 +349,8 @@ public class HistoryActivity extends Activity {
         weekSub.setText(days == 0 ? "Steps per day" : String.format(Locale.getDefault(), "Steps per day · average %,d", weekSum / days));
         weekChart.bars(x.weekNames, ws, Ui.ACCENT, goal, 6);
         hrWeekChart.barsFrom(x.weekNames, x.weekHr, 0xFFFF6B81, 6);
+        sleepWeekChart.bars(x.weekNames, x.weekSleep, SleepView.ROW_COLOR[3], -1, 6);
+        sleepWeekChart.setEmptyText("Wear the watch to bed to see your nights here");
 
         // battery
         if (!x.batt.isEmpty()) {
@@ -310,6 +361,14 @@ public class HistoryActivity extends Activity {
 
         footer.setText(String.format(Locale.getDefault(), "Saved so far: %,d heart rate, %,d stress and %,d blood oxygen readings%s.",
                 x.hrCount, x.stressCount, x.spo2Count, firstDay == null ? "" : ", from " + firstDay));
+    }
+
+    private static String duration(int mins) { return mins >= 60 ? mins / 60 + "h " + mins % 60 + "m" : mins + "m"; }
+
+    private String time(long t) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeInMillis(t * 1000);
+        return AlarmsActivity.show(this, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE));
     }
 
     private static String level(int v) { return v < 40 ? "Relaxed" : v < 60 ? "Normal" : v < 80 ? "Medium" : "High"; }

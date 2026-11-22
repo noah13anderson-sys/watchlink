@@ -23,12 +23,10 @@ public class WatchWidget extends AppWidgetProvider {
     /** Redraw every WatchLink widget; called whenever the watch sends new numbers. */
     static void update(Context c) {
         try {
-            AppWidgetManager m = AppWidgetManager.getInstance(c);
-            int[] ids = m.getAppWidgetIds(new ComponentName(c, WatchWidget.class));
-            if (ids == null || ids.length == 0) return;
             SharedPreferences p = c.getSharedPreferences(WatchService.PREFS, 0);
             String today = HealthDb.today();
-            // keep the latest numbers so the widget still has them after the app restarts
+            // keep the latest numbers (even with no widget yet) so a widget added later, or after the app
+            // restarts, starts with them
             SharedPreferences.Editor e = p.edit();
             if (WatchService.steps >= 0) e.putLong("w.steps", WatchService.steps).putString("w.day", today);
             if (WatchService.hr.time >= 0) e.putInt("w.hr", WatchService.hr.value).putString("w.hrDay", today);
@@ -37,7 +35,9 @@ public class WatchWidget extends AppWidgetProvider {
             if (WatchService.lastUpdate > 0) e.putLong("w.at", WatchService.lastUpdate);
             e.apply();
 
-            m.updateAppWidget(ids, views(c));
+            AppWidgetManager m = AppWidgetManager.getInstance(c);
+            int[] ids = m.getAppWidgetIds(new ComponentName(c, WatchWidget.class));
+            if (ids != null && ids.length > 0) m.updateAppWidget(ids, views(c));
         } catch (Exception ex) {
             android.util.Log.w(WatchService.TAG, "widget", ex);
         }

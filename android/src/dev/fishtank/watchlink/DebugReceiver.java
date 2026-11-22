@@ -86,15 +86,10 @@ public class DebugReceiver extends BroadcastReceiver {
                 HealthDb db = HealthDb.get(c);
                 int type = p.length > 1 ? p[1] & 0xff : 0;
                 if (type == IdoProtocol.HEALTH_TYPE_SLEEP) {
-                    int[] sl = IdoProtocol.parseSleepDay(p);
-                    if (sl != null) {
-                        String day = HealthDb.day(sl[0], sl[1], sl[2]);
-                        db.saveRaw(day, HealthDb.SLEEP, IdoProtocol.hex(p));
-                        android.content.ContentValues cv = new android.content.ContentValues();
-                        cv.put("sleep", sl[3]);
-                        db.setDay(day, cv);
-                    }
-                    Log.i(WatchService.TAG, "debug import sleep " + (sl == null ? "none" : sl[3]));
+                    IdoProtocol.SleepNight n = IdoProtocol.parseSleep(p);
+                    boolean kept = n != null && db.saveNight(n, IdoProtocol.hex(p));
+                    Log.i(WatchService.TAG, "debug import sleep " + (n == null ? "none"
+                            : n.total + " min on " + HealthDb.nightDay(n) + (kept ? "" : " (not kept)")));
                     return;
                 }
                 IdoProtocol.HeartPage hp = IdoProtocol.parseSeries(p, type);

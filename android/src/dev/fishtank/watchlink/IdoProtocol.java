@@ -298,39 +298,77 @@ public final class IdoProtocol {
     }
 
     /**
-     * Sleep (type 7): head (40 bytes) starts with the date; u16 total minutes at head+6 and u16 stage count at
-     * head+22 (from protocol_v3_health_sleep_data_cb_handle); items are (u8 stage, u8 minutes).
-     * Not yet checked against a real night: only the total is shown. Returns total minutes, or -1.
+     * Sleep (type 7). The head is protocol_v3_sleep_head, 40 bytes (checked against a real night, 2026-11-22):
+     *   0 version (3), 1 data type, 2 u16 year + month, day, hour, minute fallen asleep, 8 the same for waking up
+     *   (while still asleep: the time of the latest data), 14 u16 total minutes, 16/18/20/22 u16 awake/light/REM/deep
+     *   minutes, 24..27 awake/light/REM/deep counts, 28 awrr status, 29 sleep score, 30 u16 item count,
+     *   32 breath quality, 33 average heart rate, 34 SpO2, 35 breathing rate (0xff = not measured), 36..38 naps.
+     * Items are (u8 stage, u8 minutes), one after another from falling asleep: 1 awake, 2 light, 3 deep, 4 REM
+     * (the counts and minutes per stage in the head match the items). The watch rewrites the night every ~10
+     * minutes while it goes on, sometimes regrouping the stages, so the latest reply is the one to keep.
      */
-    public static int parseSleepTotal(byte[] p) {
-        if (p.length < 11 || (p[1] & 0xff) != HEALTH_TYPE_SLEEP) return -1;
+    public static final class SleepNight {
+        public static final int AWAKE = 1, LIGHT = 2, DEEP = 3, REM = 4;
+        public int startY, startM, startD, startH, startMin, endY, endM, endD, endH, endMin;
+        public int total, awake, light, rem, deep, score = -1;
+        public byte[] stages = new byte[0];
+        public int[] minutes = new int[0];
+
+        /** Fell asleep / woke up, unix seconds (the watch counts in local time). */
+        public long start() { return local(startY, startM, startD, startH, startMin); }
+        public long end() { return local(endY, endM, endD, endH, endMin); }
+
+        /** Minutes in one stage, added up from the items. */
+        public int minutesIn(int stage) {
+            int m = 0;
+            for (int i = 0; i < stages.length; i++) if (stages[i] == stage) m += minutes[i];
+            return m;
+        }
+
+        private static long local(int y, int mo, int d, int h, int mi) {
+            java.util.Calendar c = java.util.Calendar.getInstance();
+            c.clear();
+            c.set(y, mo - 1, d, h, mi);
+            return c.getTimeInMillis() / 1000;
+        }
+    }
+
+    /** A sleep reply, or null when it holds no sleep. */
+    public static SleepNight parseSleep(byte[] p) {
+        if (p.length < 14 || (p[1] & 0xff) != HEALTH_TYPE_SLEEP) return null;
         int headLen = (p[7] & 0xff) | (p[8] & 0xff) << 8;
         int dataLen = (p[9] & 0xff) | (p[10] & 0xff) << 8;
-        if (dataLen == 0) return -1;
-        int head = p.length - dataLen - headLen;
-        if (head < 11) return -1;
-        int total = (p[head + 6] & 0xff) | (p[head + 7] & 0xff) << 8;
-        if (total == 0) {   // fall back to adding up the stages
-            for (int i = p.length - dataLen; i + 1 < p.length; i += 2) total += p[i + 1] & 0xff;
+        int dataStart = p.length - dataLen, h = dataStart - headLen;
+        if (headLen < 30 || h < 11 || dataStart > p.length) return null;
+        SleepNight n = new SleepNight();
+        n.startY = (p[h + 2] & 0xff) | (p[h + 3] & 0xff) << 8;
+        n.startM = p[h + 4] & 0xff; n.startD = p[h + 5] & 0xff; n.startH = p[h + 6] & 0xff; n.startMin = p[h + 7] & 0xff;
+        n.endY = (p[h + 8] & 0xff) | (p[h + 9] & 0xff) << 8;
+        n.endM = p[h + 10] & 0xff; n.endD = p[h + 11] & 0xff; n.endH = p[h + 12] & 0xff; n.endMin = p[h + 13] & 0xff;
+        if (n.startY < 2000 || n.endY < 2000 || n.startM < 1 || n.startM > 12 || n.endM < 1 || n.endM > 12) return null;
+        n.total = (p[h + 14] & 0xff) | (p[h + 15] & 0xff) << 8;
+        n.awake = (p[h + 16] & 0xff) | (p[h + 17] & 0xff) << 8;
+        n.light = (p[h + 18] & 0xff) | (p[h + 19] & 0xff) << 8;
+        n.rem = (p[h + 20] & 0xff) | (p[h + 21] & 0xff) << 8;
+        n.deep = (p[h + 22] & 0xff) | (p[h + 23] & 0xff) << 8;
+        int score = p[h + 29] & 0xff;
+        n.score = score >= 1 && score <= 100 ? score : -1;
+        int items = dataLen / 2;
+        n.stages = new byte[items];
+        n.minutes = new int[items];
+        int sum = 0;
+        for (int i = 0; i < items; i++) {
+            n.stages[i] = p[dataStart + 2 * i];
+            n.minutes[i] = p[dataStart + 2 * i + 1] & 0xff;
+            sum += n.minutes[i];
         }
-        return total;
+        if (n.total == 0) n.total = sum;
+        return n.total > 0 ? n : null;
     }
 
     /** Parsed heart-rate page: samples as {secondsAfterMidnight, bpm}; the date is 0 when the page had no data. */
     public static final class HeartPage {
         public int items, pageItems, year, month, day; public List<int[]> samples = new ArrayList<>();
-    }
-
-    /** Sleep reply: {year, month, day, total minutes}, or null when the watch sent no sleep. */
-    public static int[] parseSleepDay(byte[] p) {
-        int total = parseSleepTotal(p);
-        if (total <= 0) return null;
-        int headLen = (p[7] & 0xff) | (p[8] & 0xff) << 8;
-        int dataLen = (p[9] & 0xff) | (p[10] & 0xff) << 8;
-        int head = p.length - dataLen - headLen;
-        int y = (p[head] & 0xff) | (p[head + 1] & 0xff) << 8;
-        if (y < 2000) return null;
-        return new int[]{y, p[head + 2] & 0xff, p[head + 3] & 0xff, total};
     }
 
     public static HeartPage parseHeartRate(byte[] p) {

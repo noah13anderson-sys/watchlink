@@ -77,6 +77,7 @@ public class WatchService extends Service {
         if (android.os.Build.VERSION.SDK_INT >= 29)
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         else startForeground(1, n);
+        HealthDb.run(() -> lastNight = HealthDb.get(this).night(HealthDb.today()));
         connect();
     }
 
@@ -369,7 +370,8 @@ public class WatchService extends Service {
     /** Latest value, its time (seconds after midnight, -1 = none), and today's min/max. */
     static final class Series { volatile int value, time = -1, min, max; }
     static final Series hr = new Series(), stress = new Series(), spo2 = new Series();
-    static volatile int sleepMins = -1;
+    /** The night that ended this morning (see HealthDb.nightDay), or null. */
+    static volatile IdoProtocol.SleepNight lastNight;
     // kept for older callers
     static volatile int heartRate, hrTime = -1, hrMin, hrMax;
 
@@ -448,20 +450,19 @@ public class WatchService extends Service {
 
         if (type == IdoProtocol.HEALTH_TYPE_SLEEP) {
             saveRaw(healthToday ? "sleep" : "sleep-earlier", payload);
-            int[] sl = IdoProtocol.parseSleepDay(payload);
-            String day = sl == null ? null : HealthDb.day(sl[0], sl[1], sl[2]);
-            if (sl != null) {
+            IdoProtocol.SleepNight n = IdoProtocol.parseSleep(payload);
+            String day = n == null ? null : HealthDb.nightDay(n);
+            if (n != null) {
                 String hex = IdoProtocol.hex(payload);
                 HealthDb.run(() -> {
                     HealthDb db = HealthDb.get(this);
-                    db.saveRaw(day, HealthDb.SLEEP, hex);
-                    android.content.ContentValues cv = new android.content.ContentValues();
-                    cv.put("sleep", sl[3]);
-                    db.setDay(day, cv);
+                    if (!db.saveNight(n, hex)) Log.i(TAG, "sleep: kept the longer night already saved for " + day);
+                    lastNight = db.night(HealthDb.today());
+                    MainActivity.refresh();
+                    HistoryActivity.refresh();
                 });
-                if (healthToday) sleepMins = sl[3];
-            } else if (healthToday) sleepMins = -1;
-            Log.i(TAG, "sleep " + (sl == null ? "none" : sl[3] + " min on " + day));
+            }
+            Log.i(TAG, "sleep " + (n == null ? "none" : n.total + " min on " + day + ", " + n.stages.length + " stages, score " + n.score));
             if (healthToday) nextHealthStep(); else finishEarlierDay(type, day);
             return;
         }
